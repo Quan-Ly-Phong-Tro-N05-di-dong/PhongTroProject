@@ -38,3 +38,6 @@ lib/
 1. Tuyệt đối không tự ý chỉnh sửa `lib/main.dart` và `lib/core/routes/`. Mọi thay đổi cấu hình toàn cục phải thảo luận trước với cả nhóm.
 2. Test code chạy được trước khi push
 3. Nên kiểm tra và pull code mới nhất (nếu có) trước khi bắt đầu code :D
+
+## Giao diện demo ứng dụng
+![Giao diện trang chủ và tìm kiếm](assets/home.png)
