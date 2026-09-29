@@ -31,6 +31,7 @@ lib/
 │   └── manage_posts/
 ├── main.dart              # Entry point của ứng dụng
 └── routers.dart
+```
 
 [!IMPORTANT]
 ### Lưu Ý Quan Trọng
