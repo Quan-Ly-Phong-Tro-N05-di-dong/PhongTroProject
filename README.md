@@ -1,17 +1,39 @@
-# flutter_application_test
+# Ứng Dụng Quản Lý & Tìm Kiếm Phòng Trọ
 
-A new Flutter project.
+Hệ thống hỗ trợ tìm kiếm, quản lý bài đăng và kết nối thuê phòng trọ, được phát triển trên nền tảng Flutter theo kiến trúc Feature-First.
 
-## Getting Started
+---
 
-This project is a starting point for a Flutter application.
+## Phân Chia Module & Trách Nhiệm
 
-A few resources to get you started if this is your first Flutter project:
+Dự án áp dụng mô hình Feature-First. Mỗi thành viên chịu trách nhiệm độc lập trên một module tương ứng trong thư mục `lib/features/`:
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+| Module | Đường dẫn thư mục | Chức năng chính | Người phụ trách |
+| :--- | :--- | :--- | :--- |
+| **Auth** | `lib/features/auth/` | Xác thực người dùng, phân quyền (Chủ trọ / Khách thuê) | Tên Thành Viên 1 |
+| **Home Catalog** | `lib/features/home_catalog/` | Khám phá, tìm kiếm, bộ lọc & gợi ý phòng trọ | Tên Thành Viên 2 |
+| **Manage Posts** | `lib/features/manage_posts/` | Tạo, chỉnh sửa, xóa và quản lý trạng thái tin đăng | Tên Thành Viên 3 |
+| **Contact** | `lib/features/contact/` | Liên hệ trực tiếp, nhắn tin & đặt lịch hẹn xem phòng | Tên Thành Viên 4 |
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+---
+
+## Cấu Trúc Thư Mục Chuẩn
+
+```text
+lib/
+├── core/                  # Cấu hình dùng chung (Network, Theme, Constants, Widgets dùng chung)
+│   ├── routes/            # Cấu hình App Route chung
+│   └── main_screen.dart   # Shell điều hướng chính (BottomNavigationBar)
+├── features/              # Chia theo module tính năng độc lập
+│   ├── auth/
+│   ├── contact/
+│   ├── home_catalog/
+│   └── manage_posts/
+├── main.dart              # Entry point của ứng dụng
+└── routers.dart
+
+[!IMPORTANT]
+### Lưu Ý Quan Trọng
+1. Tuyệt đối không tự ý chỉnh sửa `lib/main.dart` và `lib/core/routes/`. Mọi thay đổi cấu hình toàn cục phải thảo luận trước với cả nhóm.
+2. Test code chạy được trước khi push
+3. Nên kiểm tra và pull code mới nhất (nếu có) trước khi bắt đầu code :D
