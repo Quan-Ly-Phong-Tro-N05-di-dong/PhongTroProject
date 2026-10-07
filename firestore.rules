@@ -1,0 +1,53 @@
+rules_version = '2';
+
+// Firestore Security Rules của dự án Phòng Trọ.
+// Sửa file này rồi chạy `firebase deploy --only firestore:rules` để cập nhật lên Firebase.
+// Không sửa trực tiếp trên Firebase Console để tránh lệch với file này.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function myProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return signedIn() && myProfile().role == 'admin';
+    }
+
+    // Đã đăng nhập và tài khoản không bị khóa
+    function isActive() {
+      return signedIn() && myProfile().get('disabled', false) == false;
+    }
+
+    // Hồ sơ người dùng (module Auth)
+    match /users/{uid} {
+      // Chỉ xem được hồ sơ của mình; admin xem được tất cả
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+
+      // Tự tạo hồ sơ của mình, chỉ được chọn Khách thuê hoặc Chủ trọ, không được tạo sẵn ở trạng thái khóa
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.role in ['tenant', 'landlord']
+        && request.resource.data.get('disabled', false) == false;
+
+      // Tự sửa hồ sơ nhưng KHÔNG được đổi vai trò hay trạng thái khóa; admin sửa được tất cả
+      allow update: if (signedIn() && request.auth.uid == uid
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.get('disabled', false) == resource.data.get('disabled', false))
+        || isAdmin();
+
+      allow delete: if isAdmin();
+    }
+
+    // Tạm thời cho các module khác (bài đăng, liên hệ...) khi các bạn chưa viết rules riêng:
+    // ai cũng xem được, phải đăng nhập (và không bị khóa) mới được ghi
+    match /{collection}/{document=**} {
+      allow read: if collection != 'users';
+      allow write: if collection != 'users' && isActive();
+    }
+  }
+}
