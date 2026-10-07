@@ -1,7 +1,11 @@
+import 'package:firebase_core/firebase_core.dart'; // khoi tao firebase
 import 'package:flutter/material.dart';
+import 'firebase_options.dart';
 import 'routers.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   runApp(const MyApp());
 }
 
