@@ -83,6 +83,7 @@ Nhờ người quản lý thêm email của bạn vào *Project settings → Use
 | Collection | Module | Nội dung |
 | :--- | :--- | :--- |
 | `users/{uid}` | Auth | `fullName`, `email`, `phone` (có thể null), `role` (`admin` / `landlord` / `tenant`), `disabled`, `createdAt` |
+| `avatars/{uid}` | Auth | `data` (ảnh đại diện dạng Base64, đã nén 256px), `updatedAt` |
 
 Khi tạo collection mới, hãy bổ sung vào bảng này.
 
@@ -184,6 +185,13 @@ void _onContactPressed() {
   }
   // ... xử lý liên hệ với user.id
 }
+```
+
+### Hiển thị ảnh đại diện
+```dart
+import 'package:flutter_application_test/features/auth/widgets/user_avt.dart';
+
+UserAvatar(user: user, radius: 20)   // tự hiện ảnh, chưa có ảnh thì hiện chữ cái đầu
 ```
 
 ### Lưu ý
