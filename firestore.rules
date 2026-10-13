@@ -43,11 +43,24 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+  
+    // Ảnh đại diện (module Auth)
+    match /avatars/{uid} {
+      // Ai cũng xem được (để hiện ảnh chủ trọ trên bài đăng)
+      allow read: if true;
+      // Chỉ chủ tài khoản (không bị khóa) được đổi ảnh, giới hạn dung lượng
+      allow create, update: if isActive() && request.auth.uid == uid
+        && request.resource.data.data is string
+        && request.resource.data.data.size() < 700000;
+      allow delete: if (isActive() && request.auth.uid == uid) || isAdmin();
+    }
+
+
     // Tạm thời cho các module khác (bài đăng, liên hệ...) khi các bạn chưa viết rules riêng:
     // ai cũng xem được, phải đăng nhập (và không bị khóa) mới được ghi
     match /{collection}/{document=**} {
-      allow read: if collection != 'users';
-      allow write: if collection != 'users' && isActive();
+      allow read: if collection != 'users' && collection != 'avatars';
+      allow write: if collection != 'users' && collection != 'avatars' && isActive();
     }
   }
 }
