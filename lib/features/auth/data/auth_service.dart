@@ -231,6 +231,36 @@ class AuthService {
     });
   }
 
+    // ===== Ảnh đại diện (Base64, lưu ở avatars/{uid}) =====
+
+  CollectionReference<Map<String, dynamic>> get _avatars =>
+      FirebaseFirestore.instance.collection('avatars');
+
+  // Theo dõi ảnh đại diện của một người, trả về chuỗi base64 hoặc null
+  Stream<String?> watchAvatar(String uid) {
+    return _avatars.doc(uid).snapshots().map((doc) => doc.data()?['data'] as String?);
+  }
+
+  Future<void> updateAvatar(String base64) {
+    return _guard(() async {
+      final uid = _currentUser.value?.id;
+      if (uid == null) throw const AuthException('Bạn cần đăng nhập');
+      await _avatars.doc(uid).set({
+        'data': base64,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
+  Future<void> removeAvatar() {
+    return _guard(() async {
+      final uid = _currentUser.value?.id;
+      if (uid == null) return;
+      await _avatars.doc(uid).delete();
+    });
+  }
+
+
   Future<void> logout() async {
     if (!kIsWeb && _googleInitialized) {
       await GoogleSignIn.instance.signOut();
