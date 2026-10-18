@@ -26,7 +26,7 @@ lib/
 │   └── main_screen.dart   # Shell điều hướng chính (BottomNavigationBar)
 ├── features/              # Chia theo module tính năng độc lập
 │   ├── auth/
-│   │   ├── data/          # AuthService: đăng nhập, đăng ký, phân quyền (Firebase)
+│   │   ├── data/          # AuthService (đăng nhập, phân quyền), FirestoreRepository<T> (class generic dùng chung)
 │   │   ├── models/        # AppUser, UserRole
 │   │   ├── screens/       # Đăng nhập, đăng ký, quên mật khẩu, tài khoản, quản lý người dùng
 │   │   ├── utils/         # Validators
@@ -185,6 +185,24 @@ void _onContactPressed() {
   }
   // ... xử lý liên hệ với user.id
 }
+```
+
+### Đọc / ghi Firestore bằng class generic `FirestoreRepository<T>`
+`FirestoreRepository<T>` mô tả chung "một collection Firestore chứa các đối tượng kiểu `T`". Module Auth đang dùng nó cho `users` (`T = AppUser`) và `avatars` (`T = Avatar`). Các module khác có thể dùng lại cho bài đăng, tin nhắn..., chỉ cần model có `fromMap` và `toMap`:
+```dart
+import 'package:flutter_application_test/features/auth/data/firestore_repository.dart';
+
+final postRepo = FirestoreRepository<Post>(
+  collectionPath: 'posts',
+  fromMap: Post.fromMap,                 // Post.fromMap(String id, Map<String, dynamic> data)
+  toMap: (post) => post.toMap(),
+);
+
+final Post? post = await postRepo.get(postId);                       // đọc 1 bài
+postRepo.watchAll(orderBy: 'createdAt', descending: true);           // Stream<List<Post>>
+await postRepo.set(postId, post, extraFields: {'createdAt': FieldValue.serverTimestamp()});
+await postRepo.update(postId, {'status': 'rented'});                  // sửa 1 vài trường
+await postRepo.delete(postId);
 ```
 
 ### Hiển thị ảnh đại diện
