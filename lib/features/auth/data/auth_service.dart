@@ -7,6 +7,8 @@ import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
 import '../models/app_user.dart';
+import '../models/avatar.dart';
+import 'firestore_repository.dart';
 
 // Lỗi nghiệp vụ, message hiển thị trực tiếp cho người dùng
 class AuthException implements Exception {
@@ -22,10 +24,21 @@ class AuthService {
   static final AuthService instance = AuthService._();
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  final CollectionReference<Map<String, dynamic>> _users =
-      FirebaseFirestore.instance.collection('users');
+
+  // Cùng một class generic FirestoreRepository<T>, dùng cho 2 loại đối tượng khác nhau
+  final _userRepo = FirestoreRepository<AppUser>(
+    collectionPath: 'users',
+    fromMap: AppUser.fromMap,
+    toMap: (user) => user.toMap(),
+  );
+  final _avatarRepo = FirestoreRepository<Avatar>(
+    collectionPath: 'avatars',
+    fromMap: Avatar.fromMap,
+    toMap: (avatar) => avatar.toMap(),
+  );
+
   final _currentUser = ValueNotifier<AppUser?>(null);
-  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _profileSubscription;
+  StreamSubscription<AppUser?>? _profileSubscription;
   bool _googleInitialized = false;
 
   AuthService._() {
@@ -46,11 +59,9 @@ class AuthService {
     }
     // Theo dõi hồ sơ theo thời gian thực: admin đổi vai trò hoặc khóa tài khoản thì app cập nhật ngay.
     // Khi vừa đăng ký, document có thể chưa được ghi xong; register() sẽ tự cập nhật _currentUser.
-    _profileSubscription = _users.doc(firebaseUser.uid).snapshots().listen(
-      (doc) {
-        final data = doc.data();
-        if (data == null) return;
-        final profile = AppUser.fromMap(doc.id, data);
+    _profileSubscription = _userRepo.watch(firebaseUser.uid).listen(
+      (profile) {
+        if (profile == null) return;
         if (profile.disabled) {
           logout();
         } else {
@@ -69,17 +80,14 @@ class AuthService {
     }
   }
 
-  Future<AppUser?> _loadProfile(String uid) async {
-    final doc = await _users.doc(uid).get();
-    final data = doc.data();
-    return data == null ? null : AppUser.fromMap(doc.id, data);
-  }
+  Future<AppUser?> _loadProfile(String uid) => _userRepo.get(uid);
 
   Future<AppUser> _saveProfile(AppUser user) async {
-    await _users.doc(user.id).set({
-      ...user.toMap(),
-      'createdAt': FieldValue.serverTimestamp(),
-    });
+    await _userRepo.set(
+      user.id,
+      user,
+      extraFields: {'createdAt': FieldValue.serverTimestamp()},
+    );
     _currentUser.value = user;
     return user;
   }
@@ -205,10 +213,7 @@ class AuthService {
 
   // Danh sách toàn bộ người dùng, tự cập nhật khi có thay đổi
   Stream<List<AppUser>> watchAllUsers() {
-    return _users.orderBy('createdAt', descending: true).snapshots().map(
-          (snapshot) =>
-              snapshot.docs.map((doc) => AppUser.fromMap(doc.id, doc.data())).toList(),
-        );
+    return _userRepo.watchAll(orderBy: 'createdAt', descending: true);
   }
 
   Future<void> updateRole(String uid, UserRole role) {
@@ -217,7 +222,7 @@ class AuthService {
       if (uid == _currentUser.value!.id) {
         throw const AuthException('Không thể tự đổi vai trò của chính mình');
       }
-      await _users.doc(uid).update({'role': role.name});
+      await _userRepo.update(uid, {'role': role.name});
     });
   }
 
@@ -227,28 +232,26 @@ class AuthService {
       if (uid == _currentUser.value!.id) {
         throw const AuthException('Không thể tự khóa tài khoản của chính mình');
       }
-      await _users.doc(uid).update({'disabled': disabled});
+      await _userRepo.update(uid, {'disabled': disabled});
     });
   }
 
-    // ===== Ảnh đại diện (Base64, lưu ở avatars/{uid}) =====
-
-  CollectionReference<Map<String, dynamic>> get _avatars =>
-      FirebaseFirestore.instance.collection('avatars');
+  // ===== Ảnh đại diện (Base64, lưu ở avatars/{uid}) =====
 
   // Theo dõi ảnh đại diện của một người, trả về chuỗi base64 hoặc null
   Stream<String?> watchAvatar(String uid) {
-    return _avatars.doc(uid).snapshots().map((doc) => doc.data()?['data'] as String?);
+    return _avatarRepo.watch(uid).map((avatar) => avatar?.data);
   }
 
   Future<void> updateAvatar(String base64) {
     return _guard(() async {
       final uid = _currentUser.value?.id;
       if (uid == null) throw const AuthException('Bạn cần đăng nhập');
-      await _avatars.doc(uid).set({
-        'data': base64,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+      await _avatarRepo.set(
+        uid,
+        Avatar(userId: uid, data: base64),
+        extraFields: {'updatedAt': FieldValue.serverTimestamp()},
+      );
     });
   }
 
@@ -256,10 +259,9 @@ class AuthService {
     return _guard(() async {
       final uid = _currentUser.value?.id;
       if (uid == null) return;
-      await _avatars.doc(uid).delete();
+      await _avatarRepo.delete(uid);
     });
   }
-
 
   Future<void> logout() async {
     if (!kIsWeb && _googleInitialized) {
