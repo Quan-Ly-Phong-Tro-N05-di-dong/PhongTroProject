@@ -1,0 +1,26 @@
+{
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "phongtroproject-77ddf",
+          "appId": "1:166850205258:android:474c6d02508c14fd0bf8b3",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "phongtroproject-77ddf",
+          "configurations": {
+            "android": "1:166850205258:android:474c6d02508c14fd0bf8b3",
+            "web": "1:166850205258:web:4837281df0d5de380bf8b3",
+            "windows": "1:166850205258:web:9e3895698869d2fd0bf8b3"
+          }
+        }
+      }
+    }
+  }
+}

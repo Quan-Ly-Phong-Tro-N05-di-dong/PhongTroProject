@@ -1,0 +1,59 @@
+rules_version = '2';
+
+// Firestore Security Rules của dự án Phòng Trọ.
+// Sửa file này rồi chạy `firebase deploy --only firestore:rules` để cập nhật lên Firebase.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function myProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return signedIn() && myProfile().role == 'admin';
+    }
+
+    function isActive() {
+      return signedIn() && myProfile().get('disabled', false) == false;
+    }
+
+    // --- CỬA NGÁCH TEST / DEV (Bypass không cần đăng nhập) ---
+    // Cho phép đọc/ghi tự do collection test kết nối ping
+    match /_connection_test/{docId} {
+      allow read, write: if true;
+    }
+
+    // Hồ sơ người dùng (module Auth)
+    match /users/{uid} {
+      // SỬA: Cho phép AI CŨNG ĐỌC ĐƯỢC (cần thiết để khách xem SĐT/tên chủ trọ khi click vào bài đăng)
+      allow read: if true;
+
+      // Giữ nguyên logic ghi cũ, HOẶC nếu bạn cần tạo user test không cần auth thì đổi thành: allow write: if true;
+      allow create: if (signedIn() && request.auth.uid == uid
+        && request.resource.data.role in ['tenant', 'landlord']
+        && request.resource.data.get('disabled', false) == false)
+        || true; // <-- BẬT true ở đây để bypass tạo user test nếu chưa làm auth
+
+      allow update: if (signedIn() && request.auth.uid == uid
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.get('disabled', false) == resource.data.get('disabled', false))
+        || isAdmin()
+        || true; // <-- BẬT true ở đây để bypass sửa user test
+
+      allow delete: if isAdmin();
+    }
+
+    // Bài đăng và các module khác:
+    match /{collection}/{document=**} {
+      // Ai cũng xem được
+      allow read: if true;
+      // SỬA: Cho phép ghi mà KHÔNG bắt buộc isActive() / signedIn()
+      allow write: if true;
+    }
+  }
+}

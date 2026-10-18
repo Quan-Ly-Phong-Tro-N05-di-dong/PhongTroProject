@@ -1,23 +1,52 @@
 // lib/features/home_catalog/presentation/screens/counter_screen.dart
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
-// Model dữ liệu mẫu cho phòng trọ
-class RoomItem {
-  final String id;
+abstract class BaseModel<T> extends Object {
+  final T id;
+
+  const BaseModel({required this.id});
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is BaseModel<T> &&
+        other.runtimeType == runtimeType &&
+        other.id == id;
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, id);
+}
+
+class RoomItem extends BaseModel<String> {
   final String title;
+  final String region; // Khu vực, ví dụ: "Hà Đông", "Cầu Giấy"
   final String address;
   final double price; // Triệu VND / tháng
   final double area;  // m²
-  final String imageUrl;
+  final String imageURL;
 
   const RoomItem({
-    required this.id,
+    required super.id,
     required this.title,
+    required this.region,
     required this.address,
     required this.price,
     required this.area,
-    required this.imageUrl,
+    required this.imageURL,
   });
+  Map<String, dynamic> toMap() {
+    return {
+      'title': title,
+      'region': region,
+      'address': address,
+      'price': price,
+      'area': area,
+      'imageStr': imageURL,
+      'createdAt': FieldValue.serverTimestamp(), // Tốt cho việc sắp xếp tin
+    };
+  }
 }
 
 class CounterScreen extends StatefulWidget {
@@ -35,26 +64,29 @@ class _HomeScreenState extends State<CounterScreen> {
     RoomItem(
       id: '1',
       title: 'Phòng trọ khép kín full đồ gần ĐH Phenikaa',
+      region: 'Hà Đông',
       address: 'Yên Nghĩa, Hà Đông, Hà Nội',
       price: 2.8,
       area: 25,
-      imageUrl: 'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=600',
+      imageURL: 'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=600',
     ),
     RoomItem(
       id: '2',
       title: 'Chung cư mini có thang máy, ban công thoáng',
+      region: 'Hà Đông',
       address: 'Đồng Mai, Hà Đông, Hà Nội',
       price: 3.5,
       area: 32,
-      imageUrl: 'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=600',
+      imageURL: 'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=600',
     ),
     RoomItem(
       id: '3',
       title: 'Phòng đơn giá rẻ cho sinh viên năm nhất',
+      region: 'Hà Đông',
       address: 'Dương Nội, Hà Đông, Hà Nội',
       price: 1.6,
       area: 18,
-      imageUrl: 'https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=600',
+      imageURL: 'https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=600',
     ),
   ];
 
@@ -135,7 +167,7 @@ class _HomeScreenState extends State<CounterScreen> {
               child: const TextField(
                 decoration: InputDecoration(
                   icon: Icon(Icons.search, color: Colors.grey),
-                  hintText: 'Tìm theo khu vực, đường, trường học...',
+                  hintText: 'Tìm theo khu vực, tên...',
                   hintStyle: TextStyle(fontSize: 14, color: Colors.grey),
                   border: InputBorder.none,
                 ),
@@ -168,6 +200,7 @@ class _HomeScreenState extends State<CounterScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 16),
         scrollDirection: Axis.horizontal,
         itemCount: _filters.length,
+        // ignore: unnecessary_underscores
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (context, index) {
           final isSelected = _selectedFilterIndex == index;
@@ -212,7 +245,7 @@ class _HomeScreenState extends State<CounterScreen> {
               ClipRRect(
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
                 child: Image.network(
-                  room.imageUrl,
+                  room.imageURL,
                   height: 180,
                   width: double.infinity,
                   fit: BoxFit.cover,
@@ -307,19 +340,8 @@ class _HomeScreenState extends State<CounterScreen> {
           ),
           const Divider(color: Colors.white24, height: 24),
           const Text(
-            'Nhóm sinh viên thực hiện:',
-            style: TextStyle(color: Colors.white60, fontSize: 12),
-          ),
-          const SizedBox(height: 6),
-          // Thay danh sách tên thành viên nhóm tại đây
-          Wrap(
-            spacing: 12,
-            children: const [
-              Text('• Nguyễn Quang Huy', style: TextStyle(color: Colors.white, fontSize: 13)),
-              Text('• Thành viên 2', style: TextStyle(color: Colors.white, fontSize: 13)),
-              Text('• Thành viên 3', style: TextStyle(color: Colors.white, fontSize: 13)),
-              Text('• Thành viên 4', style: TextStyle(color: Colors.white, fontSize: 13)),
-            ],
+            'Sinh viên thực hiện: Nguyễn Quang Huy - MSSV: 24100245',
+            style: TextStyle(color: Colors.white70, fontSize: 13),
           ),
         ],
       ),
