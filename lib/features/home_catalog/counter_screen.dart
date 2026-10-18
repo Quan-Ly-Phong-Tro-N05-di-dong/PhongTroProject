@@ -1,24 +1,8 @@
 // lib/features/home_catalog/presentation/screens/counter_screen.dart
 import 'package:flutter/material.dart';
 
-// Model dữ liệu mẫu cho phòng trọ
-class RoomItem {
-  final String id;
-  final String title;
-  final String address;
-  final double price; // Triệu VND / tháng
-  final double area;  // m²
-  final String imageUrl;
-
-  const RoomItem({
-    required this.id,
-    required this.title,
-    required this.address,
-    required this.price,
-    required this.area,
-    required this.imageUrl,
-  });
-}
+// RoomItem nay kế thừa BaseEntity<String> (xem models/room_item.dart)
+import 'models/room_item.dart';
 
 class CounterScreen extends StatefulWidget {
   final String title;
