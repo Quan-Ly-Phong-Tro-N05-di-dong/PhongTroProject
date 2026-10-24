@@ -71,7 +71,8 @@ class Review extends BaseEntity<String> {
 
   void replyAsOwner(String text) {
     final answer = text.trim();
-    if (answer.isEmpty) throw ArgumentError('Nội dung phản hồi không được trống');
+    if (answer.isEmpty)
+      throw ArgumentError('Nội dung phản hồi không được trống');
     ownerReply = answer;
   }
 
@@ -85,28 +86,31 @@ class Review extends BaseEntity<String> {
   static RatingSummary summarize(Iterable<Review> reviews) {
     if (reviews.isEmpty) return const RatingSummary(average: 0, count: 0);
     final total = reviews.fold<int>(0, (sum, r) => sum + r.rating);
-    return RatingSummary(average: total / reviews.length, count: reviews.length);
+    return RatingSummary(
+      average: total / reviews.length,
+      count: reviews.length,
+    );
   }
 
   @override
   Map<String, dynamic> toJson() => {
-        ...baseJson(),
-        'roomId': roomId,
-        'userId': userId,
-        'appointmentId': appointmentId,
-        'rating': rating,
-        'comment': comment,
-        'ownerReply': ownerReply,
-      };
+    ...baseJson(),
+    'roomId': roomId,
+    'userId': userId,
+    'appointmentId': appointmentId,
+    'rating': rating,
+    'comment': comment,
+    'ownerReply': ownerReply,
+  };
 
   factory Review.fromJson(Map<String, dynamic> json) => Review(
-        id: json['id'] as String,
-        roomId: json['roomId'] as String,
-        userId: json['userId'] as String,
-        appointmentId: json['appointmentId'] as String,
-        rating: json['rating'] as int,
-        comment: (json['comment'] as String?) ?? '',
-        ownerReply: json['ownerReply'] as String?,
-        createdAt: BaseEntity.parseDate(json['createdAt']),
-      );
+    id: json['id'] as String,
+    roomId: json['roomId'] as String,
+    userId: json['userId'] as String,
+    appointmentId: json['appointmentId'] as String,
+    rating: json['rating'] as int,
+    comment: (json['comment'] as String?) ?? '',
+    ownerReply: json['ownerReply'] as String?,
+    createdAt: BaseEntity.parseDate(json['createdAt']),
+  );
 }

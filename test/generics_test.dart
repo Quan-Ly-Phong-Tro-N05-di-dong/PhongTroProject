@@ -49,8 +49,8 @@ void main() {
     });
 
     test('== và hashCode dựa trên kiểu + id', () {
-      final a = Contact(id: '1', roomId: 'r1', senderId: 'u2', ownerId: 'u5', message: 'hi');
-      final b = Contact(id: '1', roomId: 'r9', senderId: 'u3', ownerId: 'u5', message: 'khác');
+      final a = Contact(id: '1', roomId: 'r1', tenantId: 'u2', ownerId: 'u5');
+      final b = Contact(id: '1', roomId: 'r9', tenantId: 'u3', ownerId: 'u5');
       final other = Appointment(
         id: '1',
         roomId: 'r1',
@@ -65,7 +65,7 @@ void main() {
     });
 
     test('toString có tên lớp', () {
-      final c = Contact(id: '1', roomId: 'r1', senderId: 'u2', ownerId: 'u5', message: 'hi');
+      final c = Contact(id: '1', roomId: 'r1', tenantId: 'u2', ownerId: 'u5');
       expect(c.toString(), startsWith('Contact('));
     });
   });
@@ -80,9 +80,20 @@ void main() {
         area: 20,
         imageUrl: 'u',
       );
-      final contact = Contact(id: '1', roomId: '1', senderId: 'u2', ownerId: 'u5', message: 'hi');
+      final contact = Contact(
+        id: '1',
+        roomId: '1',
+        tenantId: 'u2',
+        ownerId: 'u5',
+      );
+      contact.send(messageId: 'm1', senderId: 'u2', text: 'hi');
       final appt = _completedAppointment();
-      final review = Review.forAppointment(appt, id: 'v1', rating: 4, comment: 'ok');
+      final review = Review.forAppointment(
+        appt,
+        id: 'v1',
+        rating: 4,
+        comment: 'ok',
+      );
       final report = Report(
         id: 'p1',
         reporterId: 'u2',
@@ -93,9 +104,19 @@ void main() {
 
       expect(EntityRegistry.fromJson<RoomItem>(room.toJson()), room);
       expect(EntityRegistry.fromJson<Contact>(contact.toJson()), contact);
-      expect(EntityRegistry.fromJson<Appointment>(appt.toJson()).status, AppointmentStatus.completed);
+      expect(
+        EntityRegistry.fromJson<Contact>(contact.toJson()).messages.single.text,
+        'hi',
+      );
+      expect(
+        EntityRegistry.fromJson<Appointment>(appt.toJson()).status,
+        AppointmentStatus.completed,
+      );
       expect(EntityRegistry.fromJson<Review>(review.toJson()).rating, 4);
-      expect(EntityRegistry.fromJson<Report>(report.toJson()).targetType, ReportTarget.room);
+      expect(
+        EntityRegistry.fromJson<Report>(report.toJson()).targetType,
+        ReportTarget.room,
+      );
     });
 
     test('đăng ký đúng tên bảng và báo lỗi khi chưa đăng ký', () {
@@ -113,23 +134,28 @@ void main() {
   group('Repository<T>', () {
     test('thêm, tìm, sửa, xóa, xuất/nạp JSON', () {
       final repo = Repository<Contact>();
-      final c = repo.add(Contact(
-        id: repo.nextId(),
-        roomId: 'r1',
-        senderId: 'u2',
-        ownerId: 'u5',
-        message: 'hi',
-      ));
+      final c = repo.add(
+        Contact(id: repo.nextId(), roomId: 'r1', tenantId: 'u2', ownerId: 'u5'),
+      );
+      c.send(messageId: 'm1', senderId: 'u2', text: 'hi');
       expect(repo.count, 1);
       expect(repo.findById(c.id), c);
       expect(() => repo.add(c), throwsArgumentError);
 
-      c.replyWith('chào bạn');
+      c.send(
+        messageId: 'm2',
+        senderId: 'u5',
+        text: 'chào bạn',
+      ); // chủ trọ trả lời
       repo.update(c);
-      expect(repo.findAll(where: (x) => x.status == ContactStatus.replied).length, 1);
+      expect(
+        repo.findAll(where: (x) => x.status == ContactStatus.replied).length,
+        1,
+      );
 
       final copy = Repository<Contact>()..importJson(repo.exportJson());
-      expect(copy.findById(c.id)?.reply, 'chào bạn');
+      expect(copy.findById(c.id)?.lastMessage?.text, 'chào bạn');
+      expect(copy.findById(c.id)?.messages.length, 2);
 
       expect(repo.remove(c.id), isTrue);
       expect(repo.count, 0);
@@ -139,9 +165,22 @@ void main() {
   group('Quy tắc nghiệp vụ module Contact', () {
     test('không tự liên hệ phòng của mình', () {
       expect(
-        () => Contact(id: '1', roomId: 'r1', senderId: 'u5', ownerId: 'u5', message: 'hi'),
+        () => Contact(id: '1', roomId: 'r1', tenantId: 'u5', ownerId: 'u5'),
         throwsArgumentError,
       );
+    });
+
+    test('chỉ người thuê / chủ trọ của cuộc trò chuyện mới nhắn được, tin không được trống', () {
+      final c = Contact(id: '1', roomId: 'r1', tenantId: 'u2', ownerId: 'u5');
+      expect(
+        () => c.send(messageId: 'm1', senderId: 'u9', text: 'xen vào'),
+        throwsArgumentError,
+      );
+      expect(
+        () => c.send(messageId: 'm1', senderId: 'u2', text: '   '),
+        throwsArgumentError,
+      );
+      expect(c.messages, isEmpty);
     });
 
     test('lịch hẹn: không đặt quá khứ, chuyển trạng thái đúng luồng', () {

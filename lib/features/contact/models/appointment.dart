@@ -13,6 +13,7 @@ class Appointment extends BaseEntity<String> {
   final String ownerId;
   final DateTime appointmentTime;
   final String note;
+  final String phone; // SĐT người thuê để chủ trọ liên lạc
   AppointmentStatus status;
   String? rejectReason;
 
@@ -23,6 +24,7 @@ class Appointment extends BaseEntity<String> {
     required this.ownerId,
     required this.appointmentTime,
     this.note = '',
+    this.phone = '',
     this.status = AppointmentStatus.pending,
     this.rejectReason,
     DateTime? createdAt,
@@ -36,6 +38,7 @@ class Appointment extends BaseEntity<String> {
     required String ownerId,
     required DateTime time,
     String note = '',
+    String phone = '',
     DateTime? now,
   }) {
     final current = now ?? DateTime.now();
@@ -52,6 +55,7 @@ class Appointment extends BaseEntity<String> {
       ownerId: ownerId,
       appointmentTime: time,
       note: note,
+      phone: phone,
     );
   }
 
@@ -65,10 +69,10 @@ class Appointment extends BaseEntity<String> {
     rejectReason = text;
   }
 
-  void cancel() => _moveTo(
-        AppointmentStatus.cancelled,
-        const {AppointmentStatus.pending, AppointmentStatus.confirmed},
-      );
+  void cancel() => _moveTo(AppointmentStatus.cancelled, const {
+    AppointmentStatus.pending,
+    AppointmentStatus.confirmed,
+  });
 
   void complete() =>
       _moveTo(AppointmentStatus.completed, const {AppointmentStatus.confirmed});
@@ -84,25 +88,27 @@ class Appointment extends BaseEntity<String> {
 
   @override
   Map<String, dynamic> toJson() => {
-        ...baseJson(),
-        'roomId': roomId,
-        'tenantId': tenantId,
-        'ownerId': ownerId,
-        'appointmentTime': appointmentTime.toIso8601String(),
-        'note': note,
-        'status': status.name,
-        'rejectReason': rejectReason,
-      };
+    ...baseJson(),
+    'roomId': roomId,
+    'tenantId': tenantId,
+    'ownerId': ownerId,
+    'appointmentTime': appointmentTime.toIso8601String(),
+    'note': note,
+    'phone': phone,
+    'status': status.name,
+    'rejectReason': rejectReason,
+  };
 
   factory Appointment.fromJson(Map<String, dynamic> json) => Appointment(
-        id: json['id'] as String,
-        roomId: json['roomId'] as String,
-        tenantId: json['tenantId'] as String,
-        ownerId: json['ownerId'] as String,
-        appointmentTime: DateTime.parse(json['appointmentTime'] as String),
-        note: (json['note'] as String?) ?? '',
-        status: AppointmentStatus.values.byName(json['status'] as String),
-        rejectReason: json['rejectReason'] as String?,
-        createdAt: BaseEntity.parseDate(json['createdAt']),
-      );
+    id: json['id'] as String,
+    roomId: json['roomId'] as String,
+    tenantId: json['tenantId'] as String,
+    ownerId: json['ownerId'] as String,
+    appointmentTime: DateTime.parse(json['appointmentTime'] as String),
+    note: (json['note'] as String?) ?? '',
+    phone: (json['phone'] as String?) ?? '',
+    status: AppointmentStatus.values.byName(json['status'] as String),
+    rejectReason: json['rejectReason'] as String?,
+    createdAt: BaseEntity.parseDate(json['createdAt']),
+  );
 }

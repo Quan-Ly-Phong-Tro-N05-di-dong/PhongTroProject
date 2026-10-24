@@ -55,29 +55,29 @@ class Report extends BaseEntity<String> {
 
   @override
   Map<String, dynamic> toJson() => {
-        ...baseJson(),
-        'reporterId': reporterId,
-        'targetType': targetType.name,
-        'targetId': targetId,
-        'reason': reason,
-        'description': description,
-        'status': status.name,
-        'handledBy': handledBy,
-        'handledAt': handledAt?.toIso8601String(),
-        'adminNote': adminNote,
-      };
+    ...baseJson(),
+    'reporterId': reporterId,
+    'targetType': targetType.name,
+    'targetId': targetId,
+    'reason': reason,
+    'description': description,
+    'status': status.name,
+    'handledBy': handledBy,
+    'handledAt': handledAt?.toIso8601String(),
+    'adminNote': adminNote,
+  };
 
   factory Report.fromJson(Map<String, dynamic> json) => Report(
-        id: json['id'] as String,
-        reporterId: json['reporterId'] as String,
-        targetType: ReportTarget.values.byName(json['targetType'] as String),
-        targetId: json['targetId'] as String,
-        reason: json['reason'] as String,
-        description: (json['description'] as String?) ?? '',
-        status: ReportStatus.values.byName(json['status'] as String),
-        handledBy: json['handledBy'] as String?,
-        handledAt: BaseEntity.parseDate(json['handledAt']),
-        adminNote: json['adminNote'] as String?,
-        createdAt: BaseEntity.parseDate(json['createdAt']),
-      );
+    id: json['id'] as String,
+    reporterId: json['reporterId'] as String,
+    targetType: ReportTarget.values.byName(json['targetType'] as String),
+    targetId: json['targetId'] as String,
+    reason: json['reason'] as String,
+    description: (json['description'] as String?) ?? '',
+    status: ReportStatus.values.byName(json['status'] as String),
+    handledBy: json['handledBy'] as String?,
+    handledAt: BaseEntity.parseDate(json['handledAt']),
+    adminNote: json['adminNote'] as String?,
+    createdAt: BaseEntity.parseDate(json['createdAt']),
+  );
 }

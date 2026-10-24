@@ -22,7 +22,8 @@ class _HomeScreenState extends State<CounterScreen> {
       address: 'Yên Nghĩa, Hà Đông, Hà Nội',
       price: 2.8,
       area: 25,
-      imageUrl: 'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=600',
+      imageUrl:
+          'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=600',
     ),
     RoomItem(
       id: '2',
@@ -30,7 +31,8 @@ class _HomeScreenState extends State<CounterScreen> {
       address: 'Đồng Mai, Hà Đông, Hà Nội',
       price: 3.5,
       area: 32,
-      imageUrl: 'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=600',
+      imageUrl:
+          'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=600',
     ),
     RoomItem(
       id: '3',
@@ -38,12 +40,19 @@ class _HomeScreenState extends State<CounterScreen> {
       address: 'Dương Nội, Hà Đông, Hà Nội',
       price: 1.6,
       area: 18,
-      imageUrl: 'https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=600',
+      imageUrl:
+          'https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=600',
     ),
   ];
 
   int _selectedFilterIndex = 0;
-  final List<String> _filters = ['Tất cả', 'Gần Phenikaa', 'Dưới 2 triệu', 'Studio', 'Có gác xép'];
+  final List<String> _filters = [
+    'Tất cả',
+    'Gần Phenikaa',
+    'Dưới 2 triệu',
+    'Studio',
+    'Có gác xép',
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -83,10 +92,7 @@ class _HomeScreenState extends State<CounterScreen> {
                     'Phòng nổi bật',
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
-                  TextButton(
-                    onPressed: () {},
-                    child: const Text('Xem tất cả'),
-                  ),
+                  TextButton(onPressed: () {}, child: const Text('Xem tất cả')),
                 ],
               ),
             ),
@@ -166,7 +172,9 @@ class _HomeScreenState extends State<CounterScreen> {
             selected: isSelected,
             selectedColor: Colors.blueAccent,
             backgroundColor: Colors.white,
-            side: BorderSide(color: isSelected ? Colors.blueAccent : Colors.grey.shade300),
+            side: BorderSide(
+              color: isSelected ? Colors.blueAccent : Colors.grey.shade300,
+            ),
             onSelected: (selected) {
               setState(() => _selectedFilterIndex = index);
             },
@@ -188,13 +196,17 @@ class _HomeScreenState extends State<CounterScreen> {
         return Card(
           margin: const EdgeInsets.only(bottom: 16),
           elevation: 2,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Ảnh phòng trọ
               ClipRRect(
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(14),
+                ),
                 child: Image.network(
                   room.imageUrl,
                   height: 180,
@@ -203,7 +215,11 @@ class _HomeScreenState extends State<CounterScreen> {
                   errorBuilder: (context, error, stackTrace) => Container(
                     height: 180,
                     color: Colors.grey[300],
-                    child: const Icon(Icons.broken_image, size: 48, color: Colors.grey),
+                    child: const Icon(
+                      Icons.broken_image,
+                      size: 48,
+                      color: Colors.grey,
+                    ),
                   ),
                 ),
               ),
@@ -226,7 +242,10 @@ class _HomeScreenState extends State<CounterScreen> {
                         ),
                         Text(
                           '${room.area.toInt()} m²',
-                          style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey.shade600,
+                          ),
                         ),
                       ],
                     ),
@@ -236,20 +255,30 @@ class _HomeScreenState extends State<CounterScreen> {
                       room.title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                     const SizedBox(height: 4),
                     // Địa chỉ
                     Row(
                       children: [
-                        Icon(Icons.location_on_outlined, size: 14, color: Colors.grey.shade600),
+                        Icon(
+                          Icons.location_on_outlined,
+                          size: 14,
+                          color: Colors.grey.shade600,
+                        ),
                         const SizedBox(width: 4),
                         Expanded(
                           child: Text(
                             room.address,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey.shade600,
+                            ),
                           ),
                         ),
                       ],
@@ -286,7 +315,7 @@ class _HomeScreenState extends State<CounterScreen> {
           ),
           const SizedBox(height: 6),
           const Text(
-            'Khoa Công nghệ Thông tin - Lập trình Di động',
+            'Trường Công nghệ Thông tin - Lập trình Di động',
             style: TextStyle(color: Colors.white70, fontSize: 13),
           ),
           const Divider(color: Colors.white24, height: 24),
@@ -299,10 +328,22 @@ class _HomeScreenState extends State<CounterScreen> {
           Wrap(
             spacing: 12,
             children: const [
-              Text('• Nguyễn Quang Huy', style: TextStyle(color: Colors.white, fontSize: 13)),
-              Text('• Thành viên 2', style: TextStyle(color: Colors.white, fontSize: 13)),
-              Text('• Thành viên 3', style: TextStyle(color: Colors.white, fontSize: 13)),
-              Text('• Thành viên 4', style: TextStyle(color: Colors.white, fontSize: 13)),
+              Text(
+                '• Lê Thị Phương Anh - 24100263',
+                style: TextStyle(color: Colors.white, fontSize: 13),
+              ),
+              Text(
+                '• Nguyễn Quang Huy - 24100245',
+                style: TextStyle(color: Colors.white, fontSize: 13),
+              ),
+              Text(
+                '• Lê Hải Anh - 24100110',
+                style: TextStyle(color: Colors.white, fontSize: 13),
+              ),
+              Text(
+                '• Hoàng Việt Anh - 23010117',
+                style: TextStyle(color: Colors.white, fontSize: 13),
+              ),
             ],
           ),
         ],
