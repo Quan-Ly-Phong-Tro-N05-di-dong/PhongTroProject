@@ -7,46 +7,12 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:166850205258:android:474c6d02508c14fd0bf8b3",
-        "android_client_info": {
-          "package_name": "com.example.flutter_application_test"
-        }
-      },
-      "oauth_client": [
-        {
-          "client_id": "166850205258-audd42l70rgh1gcaeoo5opc07iicpbe2.apps.googleusercontent.com",
-          "client_type": 3
-        }
-      ],
-      "api_key": [
-        {
-          "current_key": "AIzaSyCJyPZDKkNv5pf9EtKrUCU_xzsBBTkqoLQ"
-        }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": [
-            {
-              "client_id": "166850205258-audd42l70rgh1gcaeoo5opc07iicpbe2.apps.googleusercontent.com",
-              "client_type": 3
-            }
-          ]
-        }
-      }
-    },
-    {
-      "client_info": {
         "mobilesdk_app_id": "1:166850205258:android:086e2251726a56a60bf8b3",
         "android_client_info": {
           "package_name": "com.phenikaa.phongtro"
         }
       },
-      "oauth_client": [
-        {
-          "client_id": "166850205258-audd42l70rgh1gcaeoo5opc07iicpbe2.apps.googleusercontent.com",
-          "client_type": 3
-        }
-      ],
+      "oauth_client": [],
       "api_key": [
         {
           "current_key": "AIzaSyCJyPZDKkNv5pf9EtKrUCU_xzsBBTkqoLQ"
@@ -54,12 +20,7 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": [
-            {
-              "client_id": "166850205258-audd42l70rgh1gcaeoo5opc07iicpbe2.apps.googleusercontent.com",
-              "client_type": 3
-            }
-          ]
+          "other_platform_oauth_client": []
         }
       }
     }
