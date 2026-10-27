@@ -840,9 +840,18 @@ class _HomeScreenState extends State<CounterScreen> {
             style: TextStyle(color: Colors.white70, fontSize: 13),
           ),
           const Divider(color: Colors.white24, height: 24),
+                    const Text(
+            'Nhóm sinh viên thực hiện:',
+            style: TextStyle(color: Colors.white60, fontSize: 12),
+          ),
+          const SizedBox(height: 6),
           const Text(
-            'Sinh viên thực hiện: Nguyễn Quang Huy - MSSV: 24100245',
-            style: TextStyle(color: Colors.white70, fontSize: 13),
+            'Lê Thị Phương Anh - MSSV: 24100263\n'
+            'Nguyễn Quang Huy - MSSV: 24100245\n'
+            'Lê Hải Anh - MSSV: 24100110\n'
+            'Hoàng Việt Anh - MSSV: 23010117',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white, fontSize: 13, height: 1.5),
           ),
         ],
       ),
