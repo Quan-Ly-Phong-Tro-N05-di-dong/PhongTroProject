@@ -1,8 +1,22 @@
+import 'package:firebase_core/firebase_core.dart'; // khoi tao firebase
 import 'package:flutter/material.dart';
 import 'routers.dart';
+import 'package:flutter/gestures.dart';
+import 'firebase_options.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   runApp(const MyApp());
+}
+
+//Cho phép kéo chuột trên Desktop/Web
+class AppScrollBehavior extends MaterialScrollBehavior {
+  @override
+  Set<PointerDeviceKind> get dragDevices => {
+    PointerDeviceKind.touch,
+    PointerDeviceKind.mouse, // Kích hoạt kéo chuột trên Desktop/Web
+  };
 }
 
 class MyApp extends StatelessWidget {
@@ -16,6 +30,8 @@ class MyApp extends StatelessWidget {
         colorScheme: .fromSeed(seedColor: Colors.deepPurple),
       ),
       initialRoute: AppRoutes.root,
+      debugShowCheckedModeBanner: false,
+      scrollBehavior: AppScrollBehavior(),
       routes: AppRoutes.routes,
     );
   }

@@ -3,10 +3,10 @@ import 'package:flutter/material.dart';
 
 // Import màn hình của từng thành viên
 import '../features/home_catalog/counter_screen.dart';
-import '../features/contact/screens/interaction_home_screen.dart'; // <- MỚI
+import '../features/auth/screens/account_screen.dart';
+import '../features/contact/screens/interaction_home_screen.dart';
 
 // Khi các bạn khác hoàn thành screen thật, chỉ việc thay thế import và widget tương ứng ở đây
-// import '../features/auth/presentation/screens/auth_screen.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -23,8 +23,8 @@ class _MainScreenState extends State<MainScreen> {
   final List<Widget> _screens = const [
     CounterScreen(title: 'Phòng Trọ'), // Tab 0: Home Catalog
     _PlaceholderTab(title: 'Bài Đăng'), // Tab 1: Manage Posts
-    InteractionHomeScreen(), // Tab 2: Contact <- MỚI
-    _PlaceholderTab(title: 'Tài Khoản'), // Tab 3: Auth
+    InteractionHomeScreen(), // Tab 2: Contact
+    AccountScreen(), // Tab 3: Auth
   ];
 
   @override
