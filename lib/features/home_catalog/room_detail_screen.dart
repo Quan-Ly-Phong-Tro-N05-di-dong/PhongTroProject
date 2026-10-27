@@ -59,7 +59,7 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
       electricPrice: 3.5,
       waterPrice: 25.0,
       amenities: ['Điều hòa', 'Nóng lạnh', 'Giường tủ', 'Tủ lạnh', 'Máy giặt chung', 'Wifi tốc độ cao'],
-      landlordName: 'Cô chú Minh Hòa',
+      landlordName: 'Nguyễn Quang Huy',
       landlordPhone: '0987654321',
       landlordZalo: '0987654321',
       landlordAvatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200',
@@ -72,7 +72,7 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
     Clipboard.setData(ClipboardData(text: value));
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Đã sao chép số $type ($value). Đang kết nối...'),
+        content: Text('Đã sao chép số $type ($value)'),
         behavior: SnackBarBehavior.floating,
         duration: const Duration(seconds: 2),
       ),
@@ -256,10 +256,10 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
                         side: const BorderSide(color: Colors.blueAccent, width: 1.5),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       ),
-                      onPressed: () => _handleContact(context, 'Zalo', zalo),
+                      onPressed: () => _handleContact(context, 'liên lạc', zalo),
                       icon: const Icon(Icons.chat_bubble_outline, color: Colors.blueAccent),
                       label: const Text(
-                        'Chat Zalo',
+                        'Chat',
                         style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold),
                       ),
                     ),

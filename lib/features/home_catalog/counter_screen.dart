@@ -2,6 +2,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'room_detail_screen.dart';
+import '../auth/widgets/role_guard.dart';
 
 abstract class BaseModel<T> {
   final T id;
@@ -506,7 +507,8 @@ class _HomeScreenState extends State<CounterScreen> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: () {
+        onTap: () async{
+          if(!await requireLogin(context))return; // Kiểm tra quyền truy cập trước khi điều hướng
           Navigator.push(
             context,
             MaterialPageRoute(
