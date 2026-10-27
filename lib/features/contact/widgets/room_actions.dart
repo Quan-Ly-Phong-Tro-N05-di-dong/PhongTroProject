@@ -12,10 +12,14 @@
 //     bottomNavigationBar: RoomActionBar(roomId: room.id), // 2 nút Liên hệ / Đặt lịch
 //   )
 //
+// Các nút Liên hệ, Đặt lịch, Báo cáo đều gọi requireLogin (module Đăng nhập):
+// chưa đăng nhập thì hiện hộp thoại mời đăng nhập, đăng nhập xong mới mở tiếp.
+//
 // Điểm sao trung bình cho thẻ phòng ở trang chủ:
 //   InteractionService.instance.ratingSummary(room.id)  -> (average, count)
 import 'package:flutter/material.dart';
 
+import '../../auth/widgets/role_guard.dart';
 import '../models/contact_models.dart';
 import '../screens/booking_screen.dart';
 import '../screens/contact_chat_screen.dart';
@@ -25,7 +29,7 @@ import 'report_form.dart';
 
 export 'review_list.dart';
 
-/// Nút "Liên hệ": mở màn nhắn tin với chủ trọ của phòng.
+/// Nút "Liên hệ": mở màn nhắn tin với chủ trọ của phòng (cần đăng nhập).
 class ContactButton extends StatelessWidget {
   final String roomId;
 
@@ -38,12 +42,16 @@ class ContactButton extends StatelessWidget {
       listenable: s,
       builder: (context, child) => OutlinedButton.icon(
         onPressed: s.role == UserRole.tenant
-            ? () => Navigator.push(
-                context,
-                MaterialPageRoute<void>(
-                  builder: (ctx) => ContactChatScreen(roomId: roomId),
-                ),
-              )
+            ? () async {
+                if (!await requireLogin(context)) return;
+                if (!context.mounted) return;
+                Navigator.push(
+                  context,
+                  MaterialPageRoute<void>(
+                    builder: (ctx) => ContactChatScreen(roomId: roomId),
+                  ),
+                );
+              }
             : null,
         icon: const Icon(Icons.chat_bubble_outline),
         label: const Text('Liên hệ'),
@@ -60,7 +68,7 @@ class ContactButton extends StatelessWidget {
   }
 }
 
-/// Nút "Đặt lịch": mở form đặt lịch xem phòng.
+/// Nút "Đặt lịch": mở form đặt lịch xem phòng (cần đăng nhập).
 class BookingButton extends StatelessWidget {
   final String roomId;
 
@@ -73,12 +81,16 @@ class BookingButton extends StatelessWidget {
       listenable: s,
       builder: (context, child) => FilledButton.icon(
         onPressed: s.role == UserRole.tenant
-            ? () => Navigator.push(
-                context,
-                MaterialPageRoute<void>(
-                  builder: (ctx) => BookingScreen(roomId: roomId),
-                ),
-              )
+            ? () async {
+                if (!await requireLogin(context)) return;
+                if (!context.mounted) return;
+                Navigator.push(
+                  context,
+                  MaterialPageRoute<void>(
+                    builder: (ctx) => BookingScreen(roomId: roomId),
+                  ),
+                );
+              }
             : null,
         icon: const Icon(Icons.event_available),
         label: const Text('Đặt lịch'),
@@ -94,7 +106,7 @@ class BookingButton extends StatelessWidget {
   }
 }
 
-/// Nút "Báo cáo tin đăng".
+/// Nút "Báo cáo tin đăng" (cần đăng nhập).
 class ReportButton extends StatelessWidget {
   final String roomId;
 
@@ -103,12 +115,16 @@ class ReportButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return TextButton.icon(
-      onPressed: () => showReportSheet(
-        context,
-        type: ReportTarget.room,
-        targetId: roomId,
-        title: 'Báo cáo tin đăng',
-      ),
+      onPressed: () async {
+        if (!await requireLogin(context)) return;
+        if (!context.mounted) return;
+        showReportSheet(
+          context,
+          type: ReportTarget.room,
+          targetId: roomId,
+          title: 'Báo cáo tin đăng',
+        );
+      },
       icon: const Icon(Icons.flag_outlined),
       label: const Text('Báo cáo tin đăng'),
       style: TextButton.styleFrom(foregroundColor: IStyle.muted),

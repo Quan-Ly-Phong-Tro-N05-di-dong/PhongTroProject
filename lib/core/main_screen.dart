@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../features/home_catalog/counter_screen.dart';
 import '../features/auth/screens/account_screen.dart';
 import '../features/contact/screens/interaction_home_screen.dart';
+import '../features/auth/widgets/role_guard.dart';
 
 // Khi các bạn khác hoàn thành screen thật, chỉ việc thay thế import và widget tương ứng ở đây
 
@@ -23,7 +24,7 @@ class _MainScreenState extends State<MainScreen> {
   final List<Widget> _screens = const [
     CounterScreen(title: 'Phòng Trọ'), // Tab 0: Home Catalog
     _PlaceholderTab(title: 'Bài Đăng'), // Tab 1: Manage Posts
-    InteractionHomeScreen(), // Tab 2: Contact
+    RoleGuard(child: InteractionHomeScreen()), // Tab 2: Contact (cần đăng nhập)
     AccountScreen(), // Tab 3: Auth
   ];
 
