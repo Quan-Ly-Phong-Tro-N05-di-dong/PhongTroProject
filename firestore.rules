@@ -56,11 +56,147 @@ service cloud.firestore {
     }
 
 
-    // Tạm thời cho các module khác (bài đăng, liên hệ...) khi các bạn chưa viết rules riêng:
+    // Bài đăng cho thuê trọ (module Manage Posts).
+    match /posts/{postId} {
+      function ownLandlordPost() {
+        return isActive()
+          && myProfile().role == 'landlord'
+          && resource.data.ownerId == request.auth.uid;
+      }
+
+      function validImage(d, i) {
+        return d.imageUrls.size() <= i
+          || (
+            d.imageUrls[i] is string
+            && (
+              (
+                d.imageUrls[i].size() <= 2048
+                && d.imageUrls[i].matches('https://.*')
+              )
+              ||
+              (
+                d.imageUrls[i].size() <= 140000
+                && d.imageUrls[i].matches(
+                  'data:image/jpeg;base64,[A-Za-z0-9+/]+={0,2}'
+                )
+              )
+            )
+          );
+      }
+
+      function validPost(d) {
+        return d.keys().hasAll([
+            'ownerId', 'title', 'address', 'price', 'area',
+            'amenities', 'contact', 'imageUrls',
+            'availability', 'isHidden', 'reviewStatus',
+            'createdAt', 'updatedAt'
+          ])
+          && d.keys().hasOnly([
+            'ownerId', 'title', 'address', 'price', 'area',
+            'amenities', 'contact', 'imageUrls',
+            'availability', 'isHidden', 'reviewStatus',
+            'createdAt', 'updatedAt'
+          ])
+          && d.ownerId is string
+          && d.title is string
+          && d.title.size() > 0
+          && d.title.size() <= 120
+          && d.address is string
+          && d.address.size() > 0
+          && d.address.size() <= 300
+          && d.price is number
+          && d.price > 0
+          && d.price <= 1000000000000
+          && d.area is number
+          && d.area > 0
+          && d.area <= 1000000
+          && d.amenities is string
+          && d.amenities.size() > 0
+          && d.amenities.size() <= 1000
+          && d.contact is string
+          && d.contact.size() > 0
+          && d.contact.size() <= 150
+          && d.imageUrls is list
+          && d.imageUrls.size() >= 1
+          && d.imageUrls.size() <= 6
+          && validImage(d, 0)
+          && validImage(d, 1)
+          && validImage(d, 2)
+          && validImage(d, 3)
+          && validImage(d, 4)
+          && validImage(d, 5)
+          && d.availability in ['available', 'rented']
+          && d.isHidden is bool
+          && d.reviewStatus in ['pending', 'approved', 'rejected']
+          && d.createdAt is timestamp
+          && d.updatedAt is timestamp;
+      }
+
+      allow read: if (
+          resource.data.reviewStatus == 'approved'
+          && resource.data.isHidden == false
+        )
+        || (
+          isActive()
+          && (
+            resource.data.ownerId == request.auth.uid
+            || isAdmin()
+          )
+        );
+
+      allow create: if isActive()
+        && myProfile().role == 'landlord'
+        && validPost(request.resource.data)
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.reviewStatus == 'pending'
+        && request.resource.data.availability == 'available'
+        && request.resource.data.isHidden == false
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if isActive()
+        && validPost(request.resource.data)
+        && request.resource.data.updatedAt == request.time
+        && (
+          (
+            ownLandlordPost()
+            && (
+              request.resource.data.diff(resource.data)
+                .affectedKeys().hasOnly([
+                  'availability', 'isHidden', 'updatedAt'
+                ])
+              ||
+              (
+                request.resource.data.reviewStatus == 'pending'
+                && request.resource.data.diff(resource.data)
+                  .affectedKeys().hasOnly([
+                    'title', 'address', 'price', 'area',
+                    'amenities', 'contact', 'imageUrls',
+                    'reviewStatus', 'updatedAt'
+                  ])
+              )
+            )
+          )
+          ||
+          (
+            isAdmin()
+            && resource.data.reviewStatus == 'pending'
+            && request.resource.data.reviewStatus in ['approved', 'rejected']
+            && request.resource.data.diff(resource.data)
+              .affectedKeys().hasOnly(['reviewStatus', 'updatedAt'])
+          )
+        );
+
+      allow delete: if ownLandlordPost();
+    }
+
+    // Tạm thời cho các module khác (liên hệ...) khi các bạn chưa viết rules riêng:
     // ai cũng xem được, phải đăng nhập (và không bị khóa) mới được ghi
     match /{collection}/{document=**} {
-      allow read: if collection != 'users' && collection != 'avatars';
-      allow write: if collection != 'users' && collection != 'avatars' && isActive();
+      allow read: if collection != 'users' && collection != 'avatars'
+        && collection != 'posts';
+      allow write: if collection != 'users' && collection != 'avatars'
+        && collection != 'posts' && isActive();
     }
   }
 }
