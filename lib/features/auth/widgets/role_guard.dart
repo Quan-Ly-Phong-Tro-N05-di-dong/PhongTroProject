@@ -33,6 +33,42 @@ class RoleGuard extends StatelessWidget {
   }
 }
 
+// Dùng trước một hành động cần đăng nhập (vd: xem chi tiết phòng).
+// Trả về true nếu đã đăng nhập (sẵn hoặc vừa đăng nhập xong), false nếu người dùng bỏ qua.
+//
+//   onTap: () async {
+//     if (!await requireLogin(context)) return;
+//     // ...làm tiếp
+//   }
+Future<bool> requireLogin(BuildContext context) async {
+  if (AuthService.instance.currentUser.value != null) return true;
+
+  final goLogin = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      icon: const Icon(Icons.lock_outline),
+      title: const Text('Bạn cần đăng nhập'),
+      content: const Text('Vui lòng đăng nhập để sử dụng chức năng này'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+          child: const Text('Để sau'),
+        ),
+        ElevatedButton(
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          child: const Text('Đăng nhập'),
+        ),
+      ],
+    ),
+  );
+  if (goLogin != true || !context.mounted) return false;
+
+  await Navigator.of(context).push(
+    MaterialPageRoute(builder: (_) => const LoginScreen()),
+  );
+  return AuthService.instance.currentUser.value != null;
+}
+
 class _LoginRequired extends StatelessWidget {
   const _LoginRequired();
 
