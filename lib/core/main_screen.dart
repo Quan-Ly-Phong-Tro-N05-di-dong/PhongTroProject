@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 // Import màn hình của từng thành viên
 import '../features/home_catalog/counter_screen.dart';
 import '../features/auth/screens/account_screen.dart';
+import '../features/contact/screens/interaction_home_screen.dart';
+
 // Khi các bạn khác hoàn thành screen thật, chỉ việc thay thế import và widget tương ứng ở đây
 
 class MainScreen extends StatefulWidget {
@@ -19,19 +21,16 @@ class _MainScreenState extends State<MainScreen> {
   // Danh sách 4 màn hình tương ứng với 4 tab
   //Sau khi có giao diện thật, các bạn chỉ việc thay thế _PlaceholderTab bằng màn hình của mình (Ví dụ màn hình của Huy là CounterScreen)
   final List<Widget> _screens = const [
-    CounterScreen(title: 'Phòng Trọ'), // Tab 0: Home Catalog 
-    _PlaceholderTab(title: 'Bài Đăng'), // Tab 1: Manage Posts 
-    _PlaceholderTab(title: 'Liên Hệ'),  // Tab 2: Contact 
-    AccountScreen(),                    // Tab 3: Auth
+    CounterScreen(title: 'Phòng Trọ'), // Tab 0: Home Catalog
+    _PlaceholderTab(title: 'Bài Đăng'), // Tab 1: Manage Posts
+    InteractionHomeScreen(), // Tab 2: Contact
+    AccountScreen(), // Tab 3: Auth
   ];
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(
-        index: _currentIndex,
-        children: _screens,
-      ),
+      body: IndexedStack(index: _currentIndex, children: _screens),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         onTap: (int index) {
@@ -39,14 +38,12 @@ class _MainScreenState extends State<MainScreen> {
             _currentIndex = index;
           });
         },
-        type: BottomNavigationBarType.fixed, // Cần thiết khi có từ 4 tabs trở lên
+        type:
+            BottomNavigationBarType.fixed, // Cần thiết khi có từ 4 tabs trở lên
         selectedItemColor: Theme.of(context).primaryColor,
         unselectedItemColor: Colors.grey,
         items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home),
-            label: 'Trang chủ',
-          ),
+          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Trang chủ'),
           BottomNavigationBarItem(
             icon: Icon(Icons.post_add),
             label: 'Bài đăng',
@@ -55,10 +52,7 @@ class _MainScreenState extends State<MainScreen> {
             icon: Icon(Icons.contact_support),
             label: 'Liên hệ',
           ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.person),
-            label: 'Tài khoản',
-          ),
+          BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Tài khoản'),
         ],
       ),
     );
