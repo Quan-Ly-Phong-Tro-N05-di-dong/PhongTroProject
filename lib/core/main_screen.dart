@@ -1,13 +1,11 @@
 // lib/core/main_screen.dart
 import 'package:flutter/material.dart';
 
-// Import màn hình của từng thành viên
 import '../features/home_catalog/counter_screen.dart';
 import '../features/auth/screens/account_screen.dart';
 import '../features/contact/screens/interaction_home_screen.dart';
 import '../features/auth/widgets/role_guard.dart';
-
-// Khi các bạn khác hoàn thành screen thật, chỉ việc thay thế import và widget tương ứng ở đây
+import '../features/manage-posts/manage_posts_page.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -19,13 +17,11 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   int _currentIndex = 0;
 
-  // Danh sách 4 màn hình tương ứng với 4 tab
-  //Sau khi có giao diện thật, các bạn chỉ việc thay thế _PlaceholderTab bằng màn hình của mình (Ví dụ màn hình của Huy là CounterScreen)
   final List<Widget> _screens = const [
-    CounterScreen(title: 'Phòng Trọ'), // Tab 0: Home Catalog
-    _PlaceholderTab(title: 'Bài Đăng'), // Tab 1: Manage Posts
-    RoleGuard(child: InteractionHomeScreen()), // Tab 2: Contact (cần đăng nhập)
-    AccountScreen(), // Tab 3: Auth
+    CounterScreen(title: 'Phòng Trọ'),
+    RoleGuard(child: ManagePostsPage(embedded: true)),
+    RoleGuard(child: InteractionHomeScreen()),
+    AccountScreen(),
   ];
 
   @override
@@ -39,39 +35,18 @@ class _MainScreenState extends State<MainScreen> {
             _currentIndex = index;
           });
         },
-        type:
-            BottomNavigationBarType.fixed, // Cần thiết khi có từ 4 tabs trở lên
+        type: BottomNavigationBarType.fixed,
         selectedItemColor: Theme.of(context).primaryColor,
         unselectedItemColor: Colors.grey,
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Trang chủ'),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.post_add),
-            label: 'Bài đăng',
-          ),
+          BottomNavigationBarItem(icon: Icon(Icons.post_add), label: 'Bài đăng'),
           BottomNavigationBarItem(
             icon: Icon(Icons.contact_support),
             label: 'Liên hệ',
           ),
           BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Tài khoản'),
         ],
-      ),
-    );
-  }
-}
-
-// Giữ chỗ tạm thời cho các thành viên chưa nộp code
-class _PlaceholderTab extends StatelessWidget {
-  final String title;
-  const _PlaceholderTab({required this.title});
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Text(
-        'Module: $title\n(Đang hoàn thiện)',
-        textAlign: TextAlign.center,
-        style: const TextStyle(fontSize: 18, color: Colors.grey),
       ),
     );
   }

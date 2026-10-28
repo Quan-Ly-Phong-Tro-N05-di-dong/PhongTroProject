@@ -8,7 +8,12 @@ import 'post_service.dart';
 
 class PostsPage extends StatefulWidget {
   final String role;
-  const PostsPage({super.key, required this.role});
+  final bool embedded;
+  const PostsPage({
+    super.key,
+    required this.role,
+    this.embedded = false,
+  });
 
   @override
   State<PostsPage> createState() => _PostsPageState();
@@ -425,6 +430,44 @@ class _PostsPageState extends State<PostsPage> {
     );
   }
 
+  Widget _embeddedTabs() {
+    return Align(
+      alignment: Alignment.center,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 1180),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ChoiceChip(
+                  avatar: const Icon(Icons.public, size: 18),
+                  label: const Text('Bài công khai'),
+                  selected: _selectedTab == 0,
+                  onSelected: _busy ? null : (selected) {
+                    if (selected) _changeTab(0);
+                  },
+                ),
+                ChoiceChip(
+                  avatar: Icon(_isLandlord ? Icons.article_outlined
+                      : Icons.fact_check_outlined, size: 18),
+                  label: Text(_isLandlord ? 'Bài của tôi' : 'Chờ duyệt'),
+                  selected: _selectedTab == 1,
+                  onSelected: _busy ? null : (selected) {
+                    if (selected) _changeTab(1);
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -442,6 +485,7 @@ class _PostsPageState extends State<PostsPage> {
       body: Column(
         children: [
           if (_busy) const LinearProgressIndicator(),
+          if (widget.embedded && (_isLandlord || _isAdmin)) _embeddedTabs(),
           Expanded(
             child: StreamBuilder<List<RentalPost>>(
               stream: _postsStream,
@@ -483,7 +527,7 @@ class _PostsPageState extends State<PostsPage> {
               label: const Text('Thêm bài'),
             )
           : null,
-      bottomNavigationBar: _isLandlord || _isAdmin
+      bottomNavigationBar: !widget.embedded && (_isLandlord || _isAdmin)
           ? NavigationBar(
               height: 68,
               selectedIndex: _selectedTab,

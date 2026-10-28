@@ -8,7 +8,9 @@ import 'posts_page.dart';
 /// Màn hình đầu vào của module. Firebase được khởi tạo bởi ứng dụng chung
 /// hoặc bởi dev_main.dart khi chạy thử độc lập.
 class ManagePostsPage extends StatefulWidget {
-  const ManagePostsPage({super.key});
+  // Khi đặt trong MainScreen, dùng thanh chọn mục phía trên nội dung.
+  final bool embedded;
+  const ManagePostsPage({super.key, this.embedded = false});
 
   @override
   State<ManagePostsPage> createState() => _ManagePostsPageState();
@@ -36,13 +38,20 @@ class _ManagePostsPageState extends State<ManagePostsPage> {
         }
         final user = snapshot.data;
         if (user == null) {
-          return const _StatusPage(
-            message: 'Bạn chưa đăng nhập.\n\n'
-                'Hãy đăng nhập trong ứng dụng chung của nhóm, '
-                'sau đó chạy lại module quản lý bài đăng.',
+          return _StatusPage(
+            message: widget.embedded
+                ? 'Bạn chưa đăng nhập.\n\nHãy đăng nhập ở mục Tài khoản '
+                    'rồi quay lại Bài đăng.'
+                : 'Bạn chưa đăng nhập.\n\n'
+                    'Hãy đăng nhập trong ứng dụng chung của nhóm, '
+                    'sau đó chạy lại module quản lý bài đăng.',
           );
         }
-        return _ProfileGate(key: ValueKey(user.uid), uid: user.uid);
+        return _ProfileGate(
+          key: ValueKey(user.uid),
+          uid: user.uid,
+          embedded: widget.embedded,
+        );
       },
     );
   }
@@ -50,7 +59,8 @@ class _ManagePostsPageState extends State<ManagePostsPage> {
 
 class _ProfileGate extends StatefulWidget {
   final String uid;
-  const _ProfileGate({super.key, required this.uid});
+  final bool embedded;
+  const _ProfileGate({super.key, required this.uid, required this.embedded});
 
   @override
   State<_ProfileGate> createState() => _ProfileGateState();
@@ -102,6 +112,7 @@ class _ProfileGateState extends State<_ProfileGate> {
         return PostsPage(
           key: ValueKey('${widget.uid}/$role'),
           role: role,
+          embedded: widget.embedded,
         );
       },
     );
