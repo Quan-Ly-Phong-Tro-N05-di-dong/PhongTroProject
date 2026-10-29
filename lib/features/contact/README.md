@@ -41,6 +41,14 @@ lib/features/contact/
 
 Màn hình chính của module: `InteractionHomeScreen` (đổi giao diện theo vai trò: người thuê 4 tab, chủ trọ 3 tab, admin 2 tab).
 
+## Wireframe
+
+![Wireframe module Tương tác và phản hồi người dùng](../../../assets/lien_he_wireframe.png)
+
+Gồm 7 màn hình chính của module và khung ghi chú (luồng chính, vai trò, file code tương ứng). File vector gốc: [`assets/lien_he_wireframe.svg`](../../../assets/lien_he_wireframe.svg).
+
+Màn 4 vẽ thanh chọn vai trò của chế độ demo. Khi chạy dữ liệu thật, thanh này được thay bằng dòng "Đang đăng nhập: tên · vai trò".
+
 ## Dữ liệu và Firebase
 
 `InteractionService` giữ dữ liệu trong `Repository<T>` (dùng chung của nhóm). Có 2 chế độ:
