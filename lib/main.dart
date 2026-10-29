@@ -3,10 +3,12 @@ import 'package:flutter/material.dart';
 import 'routers.dart';
 import 'package:flutter/gestures.dart';
 import 'firebase_options.dart';
+import 'features/contact/services/contact_firebase.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  ContactFirebase.instance.attach(); // module Liên hệ dùng dữ liệu thật trên Firestore
   runApp(const MyApp());
 }
 

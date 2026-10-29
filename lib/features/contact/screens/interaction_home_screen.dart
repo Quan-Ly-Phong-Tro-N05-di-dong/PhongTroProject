@@ -2,12 +2,14 @@
 //
 // Màn hình chính của module "Tương tác & phản hồi người dùng".
 // Gắn vào tab "Liên Hệ" của MainScreen. Giao diện đổi theo vai trò:
-//   - Người thuê: Lịch hẹn | Tin nhắn | Đánh giá | Phòng (phòng mẫu để thử luồng)
+//   - Người thuê: Lịch hẹn | Tin nhắn | Đánh giá | Phòng
 //   - Chủ trọ:    Lịch hẹn | Tin nhắn | Đánh giá
 //   - Admin:      Báo cáo | Đánh giá
 //
-// Thanh chọn vai trò ở trên cùng chỉ để DEMO. Khi module Đăng nhập xong thì bỏ nó đi
-// và gọi InteractionService.instance.switchUser(...) với người dùng đăng nhập thật.
+// Có 2 chế độ (InteractionService.isDemo):
+//   - Demo (dữ liệu giả, dùng trong test): có thanh chọn vai trò ở trên cùng.
+//   - Thật (đã nối Firebase, xem ContactFirebase): vai trò lấy từ tài khoản đăng nhập,
+//     thanh chọn vai trò được thay bằng dòng "Đang đăng nhập: ...".
 import 'package:flutter/material.dart';
 
 import '../services/interaction_service.dart';
@@ -56,7 +58,7 @@ class InteractionHomeScreen extends StatelessWidget {
             ),
             body: Column(
               children: [
-                _RoleBar(service: s),
+                if (s.isDemo) _RoleBar(service: s) else _UserBar(service: s),
                 Material(
                   color: Colors.white,
                   child: TabBar(
@@ -74,6 +76,27 @@ class InteractionHomeScreen extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// Dòng cho biết đang dùng tài khoản nào (chế độ dữ liệu thật).
+class _UserBar extends StatelessWidget {
+  final InteractionService service;
+
+  const _UserBar({required this.service});
+
+  @override
+  Widget build(BuildContext context) {
+    final user = service.currentUser;
+    return Container(
+      width: double.infinity,
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: Text(
+        'Đang đăng nhập: ${user.name} · ${user.role.label}',
+        style: const TextStyle(fontSize: 12, color: IStyle.muted),
+      ),
     );
   }
 }

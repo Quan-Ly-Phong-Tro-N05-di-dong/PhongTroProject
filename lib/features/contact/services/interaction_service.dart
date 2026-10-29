@@ -157,11 +157,36 @@ class InteractionService extends ChangeNotifier {
 
   int _messageSeq = 0;
 
+  /// true = dữ liệu giả để demo (có thanh chọn vai trò).
+  /// false = đang dùng tài khoản và dữ liệu thật trên Firestore.
+  bool isDemo = true;
+
+  /// Nếu gán, id tin nhắn lấy từ hàm này (Firestore) thay vì đếm m1, m2, ...
+  String Function()? idGenerator;
+
   DemoUser _current = DemoUsers.tenant;
 
   DemoUser get currentUser => _current;
   UserRole get role => _current.role;
   DateTime now() => _clock();
+
+  /// Báo giao diện vẽ lại (lớp bên ngoài không gọi trực tiếp notifyListeners được).
+  void refresh() => notifyListeners();
+
+  /// Chuyển sang dữ liệu thật: xóa sạch dữ liệu giả, dữ liệu mới sẽ đến từ Firestore.
+  void startRemoteMode() {
+    isDemo = false;
+    contacts.replaceAll(const []);
+    appointments.replaceAll(const []);
+    reviews.replaceAll(const []);
+    reports.replaceAll(const []);
+    rooms.clear();
+    roomOwner.clear();
+    users.clear();
+    hiddenRoomIds.clear();
+    lockedUserIds.clear();
+    notifyListeners();
+  }
 
   // ---------------------------------------------------------------------------
   // Người dùng và phòng (dữ liệu giả, chờ các module khác)
@@ -610,7 +635,7 @@ class InteractionService extends ChangeNotifier {
   // Hàm nội bộ
   // ---------------------------------------------------------------------------
 
-  String _nextMessageId() => 'm${++_messageSeq}';
+  String _nextMessageId() => idGenerator?.call() ?? 'm${++_messageSeq}';
 
   void _requireNotLocked() {
     if (lockedUserIds.contains(_current.id)) {
