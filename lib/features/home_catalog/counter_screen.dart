@@ -1,45 +1,51 @@
 // lib/features/home_catalog/presentation/screens/counter_screen.dart
 import 'dart:async';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
-import 'room_detail_screen.dart';
-import '../auth/widgets/role_guard.dart';
 
-abstract class BaseModel<T> {
-  final T id;
-  const BaseModel({required this.id});
-}
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+
+import 'models/room_item.dart';
+import '../auth/widgets/role_guard.dart';
+import 'room_detail_screen.dart';
 
 class FilterModel {
+  static const String allOption = 'Tất cả';
+  static const double defaultMinPrice = 500000; // 500.000 VNĐ
+  static const double defaultMaxPrice = 15000000; // 15.000.000 VNĐ
+  static const double defaultMinArea = 10.0;
+  static const double defaultMaxArea = 80.0;
+
   final String region;
-  final double minPrice;
-  final double maxPrice;
+  final double minPrice; // Đơn vị: VNĐ
+  final double maxPrice; // Đơn vị: VNĐ
   final double minArea;
   final double maxArea;
-  final String furniture; // 'Tất cả', 'Full nội thất', 'Phòng trống'
-  final int minRating;    // 0: Tất cả, 1 - 5 sao
+  final String furniture;
+  final Set<String> selectedAmenities; // Các key tiện ích lấy động từ bài đăng
+  final int minRating; // 0: Tất cả, 1 - 5 sao
   final String? hotSearch;
 
   const FilterModel({
-    this.region = 'Tất cả',
-    this.minPrice = 0.5,
-    this.maxPrice = 15.0,
-    this.minArea = 10.0,
-    this.maxArea = 80.0,
-    this.furniture = 'Tất cả',
+    this.region = allOption,
+    this.minPrice = defaultMinPrice,
+    this.maxPrice = defaultMaxPrice,
+    this.minArea = defaultMinArea,
+    this.maxArea = defaultMaxArea,
+    this.furniture = allOption,
+    this.selectedAmenities = const {},
     this.minRating = 0,
     this.hotSearch,
   });
 
   // Kiểm tra xem bộ lọc có đang ở trạng thái mặc định không
   bool get isDefault =>
-      region == 'Tất cả' &&
-      minPrice == 0.5 &&
-      maxPrice == 15.0 &&
-      minArea == 10.0 &&
-      maxArea == 80.0 &&
-      furniture == 'Tất cả' &&
+      region == allOption &&
+      minPrice == defaultMinPrice &&
+      maxPrice == defaultMaxPrice &&
+      minArea == defaultMinArea &&
+      maxArea == defaultMaxArea &&
+      furniture == allOption &&
+      selectedAmenities.isEmpty &&
       minRating == 0 &&
       hotSearch == null;
 
@@ -50,6 +56,7 @@ class FilterModel {
     double? minArea,
     double? maxArea,
     String? furniture,
+    Set<String>? selectedAmenities,
     int? minRating,
     String? hotSearch,
     bool clearHotSearch = false,
@@ -61,94 +68,9 @@ class FilterModel {
       minArea: minArea ?? this.minArea,
       maxArea: maxArea ?? this.maxArea,
       furniture: furniture ?? this.furniture,
+      selectedAmenities: selectedAmenities ?? this.selectedAmenities,
       minRating: minRating ?? this.minRating,
       hotSearch: clearHotSearch ? null : (hotSearch ?? this.hotSearch),
-    );
-  }
-}
-
-class RoomItem extends BaseModel<String> {
-  final String title;
-  final String region;
-  final String address;
-  final double price;
-  final double area;
-  final String imageURL;
-  final String furniture;
-  final double rating;
-  final List<String> tags;
-
-  const RoomItem({
-    required super.id,
-    required this.title,
-    required this.region,
-    required this.address,
-    required this.price,
-    required this.area,
-    required this.imageURL,
-    this.furniture = 'Phòng trống',
-    this.rating = 5.0,
-    this.tags = const [],
-  });
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is RoomItem &&
-          runtimeType == other.runtimeType &&
-          id == other.id &&
-          title == other.title &&
-          region == other.region &&
-          address == other.address &&
-          price == other.price &&
-          area == other.area &&
-          imageURL == other.imageURL &&
-          furniture == other.furniture &&
-          rating == other.rating &&
-          listEquals(tags, other.tags);
-
-  @override
-  int get hashCode => Object.hash(
-        id,
-        title,
-        region,
-        address,
-        price,
-        area,
-        imageURL,
-        furniture,
-        rating,
-        Object.hashAll(tags),
-      );
-
-  Map<String, dynamic> toMap() {
-    return {
-      'title': title,
-      'region': region,
-      'address': address,
-      'price': price,
-      'area': area,
-      'imageURL': imageURL,
-      'furniture': furniture,
-      'rating': rating,
-      'tags': tags,
-      'createdAt': FieldValue.serverTimestamp(),
-    };
-  }
-
-  factory RoomItem.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>? ?? {};
-    return RoomItem(
-      id: doc.id,
-      title: data['title'] ?? '',
-      region: data['region'] ?? '',
-      address: data['address'] ?? '',
-      price: (data['price'] as num?)?.toDouble() ?? 0.0,
-      area: (data['area'] as num?)?.toDouble() ?? 0.0,
-      imageURL: data['imageURL'] ?? '',
-      furniture: data['furniture'] ?? 'Phòng trống',
-      rating: (data['rating'] as num?)?.toDouble() ?? 5.0,
-      tags: List<String>.from(data['tags'] ?? []),
     );
   }
 }
@@ -163,180 +85,378 @@ class CounterScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<CounterScreen> {
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final RoomDetailFirebaseService _detailService =
+      RoomDetailFirebaseService.instance;
+
   // Quản lý tìm kiếm từ khóa và Debounce
   final TextEditingController _searchController = TextEditingController();
   Timer? _debounce;
   String _searchKeyword = '';
 
-  // Quản lý bộ lọc Modal & Chip nhanh
+  // Quản lý bộ lọc Modal & Chip nhanh (dùng chuỗi tag thay vì index cố định)
   FilterModel _currentFilter = const FilterModel();
-  int _selectedFilterIndex = 0;
+  String _selectedQuickFilter = FilterModel.allOption;
 
-  final List<String> _filters = [
-    'Tất cả',
-    'Gần Phenikaa',
-    'Dưới 2 triệu',
-    'Studio',
-    'Có gác xép',
-  ];
+  // Các Stream lắng nghe từ Firestore:
+  // 1. `posts` (bài đã duyệt & còn phòng)
+  // 2. `room_detail` (chi tiết phòng: amenities, region, furniture, tags...)
+  // 3. `search_tags` (các tag phục vụ đề mục "Top tìm kiếm" & bộ lọc nhanh)
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _postsSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _detailsSub;
+  StreamSubscription<List<String>>? _tagsSub;
 
-  // Dữ liệu Mock phục vụ hiển thị
-  final List<RoomItem> mockRooms = const [
-    RoomItem(
-      id: '1',
-      title: 'Phòng trọ khép kín full đồ gần ĐH Phenikaa',
-      region: 'Hà Đông',
-      address: 'Yên Nghĩa, Hà Đông, Hà Nội',
-      price: 2.8,
-      area: 25,
-      furniture: 'Full nội thất',
-      rating: 4.8,
-      tags: ['Gần Phenikaa', 'Có gác xép'],
-      imageURL: 'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=600',
-    ),
-    RoomItem(
-      id: '2',
-      title: 'Chung cư mini cao cấp có thang máy, ban công',
-      region: 'Hà Đông',
-      address: 'Đồng Mai, Hà Đông, Hà Nội',
-      price: 4.2,
-      area: 35,
-      furniture: 'Full nội thất',
-      rating: 4.9,
-      tags: ['Studio', 'Chung cư mini'],
-      imageURL: 'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=600',
-    ),
-    RoomItem(
-      id: '3',
-      title: 'Phòng đơn giá rẻ cho sinh viên năm nhất',
-      region: 'Yên Nghĩa',
-      address: 'Yên Nghĩa, Hà Đông, Hà Nội',
-      price: 1.6,
-      area: 18,
-      furniture: 'Phòng trống',
-      rating: 4.2,
-      tags: ['Gần Phenikaa', 'Dưới 2 triệu'],
-      imageURL: 'https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=600',
-    ),
-    RoomItem(
-      id: '4',
-      title: 'Studio sang trọng full nội thất Dương Nội',
-      region: 'Dương Nội',
-      address: 'KĐT Dương Nội, Hà Đông, Hà Nội',
-      price: 5.0,
-      area: 40,
-      furniture: 'Full nội thất',
-      rating: 5.0,
-      tags: ['Studio', 'Gần Phenikaa'],
-      imageURL: 'https://images.unsplash.com/photo-1493809842364-78817add7ffb?w=600',
-    ),
-    RoomItem(
-      id: '5',
-      title: 'Phòng trọ có gác xép thoáng mát giá sinh viên',
-      region: 'Hà Đông',
-      address: 'Phú La, Hà Đông, Hà Nội',
-      price: 1.8,
-      area: 20,
-      furniture: 'Phòng trống',
-      rating: 4.5,
-      tags: ['Dưới 2 triệu', 'Có gác xép'],
-      imageURL: 'https://images.unsplash.com/photo-1598928506311-c55ded91a20c?w=600',
-    ),
-    RoomItem(
-      id: '6',
-      title: 'Phòng trọ khép kín mới xây không chung chủ',
-      region: 'Hà Đông',
-      address: 'Văn Quán, Hà Đông, Hà Nội',
-      price: 2.3,
-      area: 22,
-      furniture: 'Full nội thất',
-      rating: 4.6,
-      tags: ['Không chung chủ', 'Có gác xép'],
-      imageURL: 'https://images.unsplash.com/photo-1598928506311-c55ded91a20c?w=600',
-    ),
-  ];
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> _postDocs = const [];
+  Map<String, Map<String, dynamic>> _detailMapByPostId = const {};
+  List<String> _firebaseSearchTags = const [];
+
+  bool _isLoading = true;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _subscribeFirestoreStreams();
+  }
+
+  void _subscribeFirestoreStreams() {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    _postsSub?.cancel();
+    _detailsSub?.cancel();
+    _tagsSub?.cancel();
+
+    // 1. Lắng nghe collection `search_tags` trên Firebase phục vụ Top tìm kiếm & Chip lọc nhanh
+    _tagsSub = _detailService.watchSearchTags().listen(
+      (tags) {
+        if (!mounted) return;
+        setState(() {
+          _firebaseSearchTags = tags;
+        });
+      },
+      onError: (_) {},
+    );
+
+    // 2. Lắng nghe collection `room_detail` để lấy RoomExtraDetail phục vụ bộ lọc
+    _detailsSub = _detailService.roomDetailsRef.snapshots().listen(
+      (snapshot) {
+        final map = <String, Map<String, dynamic>>{};
+        for (final doc in snapshot.docs) {
+          final data = doc.data();
+          final postId = (data['postId'] ?? doc.id).toString();
+          map[postId] = data;
+          map[doc.id] = data;
+        }
+        if (!mounted) return;
+        setState(() {
+          _detailMapByPostId = map;
+        });
+      },
+      onError: (_) {},
+    );
+
+    // 3. Lắng nghe các bài đăng đã được phê duyệt (`approved`) và không bị ẩn (`isHidden == false`)
+    _postsSub = _db
+        .collection('posts')
+        .where('reviewStatus', isEqualTo: 'approved')
+        .where('isHidden', isEqualTo: false)
+        .snapshots()
+        .listen(
+      (snapshot) {
+        if (!mounted) return;
+        setState(() {
+          _postDocs = snapshot.docs;
+          _isLoading = false;
+          _errorMessage = null;
+        });
+        // Tự động đồng bộ ngầm bản ghi `room_detail` cho những bài mới được duyệt mà chưa có `room_detail`
+        _syncMissingRoomDetails(snapshot.docs);
+      },
+      onError: (Object error) {
+        if (!mounted) return;
+        setState(() {
+          _isLoading = false;
+          _errorMessage = 'Không thể tải danh sách phòng trọ: $error';
+        });
+      },
+    );
+  }
+
+  /// Nếu bài đăng trên `posts` chưa có document tương ứng trong `room_detail`,
+  /// tự động khởi tạo từ dữ liệu bài đăng (tách tiện ích theo dấu phẩy) để liên kết 2 bảng.
+  Future<void> _syncMissingRoomDetails(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+  ) async {
+    for (final doc in docs) {
+      if (_detailMapByPostId.containsKey(doc.id)) continue;
+      final postData = doc.data();
+      final detail = RoomExtraDetail.fromMap(
+        const <String, dynamic>{},
+        postId: doc.id,
+        postData: postData,
+      );
+      try {
+        await _detailService.saveRoomExtraDetail(
+          postId: doc.id,
+          detail: detail,
+        );
+      } catch (_) {
+        // Bỏ qua nếu người dùng hiện tại không có quyền ghi trên Firestore
+      }
+    }
+  }
 
   @override
   void dispose() {
     _debounce?.cancel();
+    _postsSub?.cancel();
+    _detailsSub?.cancel();
+    _tagsSub?.cancel();
     _searchController.dispose();
     super.dispose();
   }
 
-  // Hàm chuẩn hóa chuỗi tiếng Việt (Hỗ trợ tìm kiếm cả không dấu lẫn có dấu)
-  String _removeVietnameseDiacritics(String str) {
-    var result = str.toLowerCase();
-    const withDia = 'àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ';
-    const withoutDia = 'aaaaaaaaaaaaaaaaaeeeeeeeeeeeiiiiiooooooooooooooooouuuuuuuuuuuyyyyyd';
-    for (int i = 0; i < withDia.length; i++) {
-      result = result.replaceAll(withDia[i], withoutDia[i]);
+  /// Ghép nối dữ liệu từ `posts` và `room_detail` thành danh sách `RoomItem`
+  /// Chỉ hiển thị các phòng có trạng thái `availability == 'available'`
+  List<RoomItem> get _approvedAvailableRooms {
+    final rooms = <RoomItem>[];
+    for (final doc in _postDocs) {
+      final data = doc.data();
+      final availability = (data['availability'] ?? 'available').toString();
+      if (availability != 'available') continue;
+
+      final detailMap = _detailMapByPostId[doc.id];
+      rooms.add(
+        RoomItem.fromPostAndDetail(
+          postDoc: doc,
+          detailMap: detailMap,
+        ),
+      );
     }
-    return result;
+
+    rooms.sort((a, b) {
+      final timeA = a.createdAt?.millisecondsSinceEpoch ?? 0;
+      final timeB = b.createdAt?.millisecondsSinceEpoch ?? 0;
+      final cmp = timeB.compareTo(timeA);
+      return cmp != 0 ? cmp : a.id.compareTo(b.id);
+    });
+    return rooms;
+  }
+
+  /// Danh sách các tag hiển thị ở thanh chọn nhanh và mục "Tìm kiếm phổ biến":
+  /// Lấy từ collection `search_tags` trên Firebase kết hợp với các `tags` & `amenities` thực tế của phòng
+  List<String> get _dynamicQuickTags {
+    final tags = <String>{..._firebaseSearchTags};
+    for (final room in _approvedAvailableRooms) {
+      tags.addAll(room.tags);
+    }
+    // Nếu chưa có tag nào trong `search_tags` hoặc `room.tags`, lấy các key tiện ích đã tách dấu phẩy
+    if (tags.isEmpty) {
+      for (final room in _approvedAvailableRooms) {
+        tags.addAll(room.amenities);
+      }
+    }
+    return tags.toList();
+  }
+
+  /// Danh sách Chip hiển thị trên thanh ngang màn hình chính (luôn có 'Tất cả' ở đầu)
+  List<String> get _quickFilterChips => [
+        FilterModel.allOption,
+        ..._dynamicQuickTags,
+      ];
+
+  /// Danh sách Khu vực (Region) lấy động từ dữ liệu phòng thực tế trên toàn thành phố/vùng miền
+  List<String> get _dynamicRegions {
+    final regions = <String>{};
+    for (final room in _approvedAvailableRooms) {
+      if (room.region.trim().isNotEmpty) {
+        regions.add(room.region.trim());
+      }
+      // Lấy thêm cấp Tỉnh/Thành phố hoặc Quận/Huyện ở cuối địa chỉ (nếu có)
+      final segments = room.addressSegments;
+      if (segments.length >= 2) {
+        regions.add(segments.last);
+        regions.add(segments[segments.length - 2]);
+      }
+    }
+    final sorted = regions.toList()..sort();
+    return [FilterModel.allOption, ...sorted];
+  }
+
+  /// Danh sách tất cả các key tiện ích (`amenities`) được tách bằng dấu phẩy từ các bài đăng
+  List<String> get _dynamicAmenityKeys {
+    final keys = <String>{};
+    for (final room in _approvedAvailableRooms) {
+      keys.addAll(room.amenities);
+    }
+    final sorted = keys.toList()..sort();
+    return sorted;
+  }
+
+  /// Danh sách các tùy chọn tình trạng nội thất (`furniture`) lấy động từ `RoomExtraDetail`
+  List<String> get _dynamicFurnitureOptions {
+    final options = <String>{};
+    for (final room in _approvedAvailableRooms) {
+      if (room.furniture.trim().isNotEmpty) {
+        options.add(room.furniture.trim());
+      }
+    }
+    return [FilterModel.allOption, ...options];
   }
 
   // Kiểm tra xem người dùng có đang kích hoạt bất kỳ bộ lọc/tìm kiếm nào không
   bool get _isFiltering =>
       !_currentFilter.isDefault ||
-      _selectedFilterIndex != 0 ||
+      _selectedQuickFilter != FilterModel.allOption ||
       _searchKeyword.trim().isNotEmpty;
 
-  // 1. Danh sách cho Row đầu tiên: Top tìm kiếm / Đề xuất
-  List<RoomItem> get _topRecommendedRooms {
-    return mockRooms.where((room) => room.rating >= 4.5).toList();
+  /// Kiểm tra 1 phòng có khớp với 1 tag tìm kiếm (từ Firebase `search_tags` hoặc `room.tags`) hay không
+  bool _roomMatchesTag(RoomItem room, String tag) {
+    final normTag = removeVietnameseDiacritics(tag.trim());
+    if (normTag.isEmpty) return true;
+
+    final inTags = room.tags.any(
+      (t) => removeVietnameseDiacritics(t).contains(normTag),
+    );
+    final inAmenities = room.amenities.any(
+      (am) => removeVietnameseDiacritics(am).contains(normTag),
+    );
+    final inTitle = removeVietnameseDiacritics(room.title).contains(normTag);
+    final inAddress =
+        removeVietnameseDiacritics(room.address).contains(normTag);
+    final inDesc = removeVietnameseDiacritics(
+      room.extraDetail?.description ?? '',
+    ).contains(normTag);
+
+    return inTags || inAmenities || inTitle || inAddress || inDesc;
   }
 
-  // 2. Danh sách cho phần bên dưới: Tất cả phòng trọ (Tuần tự mặc định hoặc theo bộ lọc)
+  // 1. Danh sách cho Row đầu tiên: Top tìm kiếm / Đề xuất
+  // Phục vụ các phòng khớp với collection `search_tags` trên Firebase hoặc có rating cao
+  List<RoomItem> get _topRecommendedRooms {
+    final rooms = _approvedAvailableRooms;
+    if (_firebaseSearchTags.isNotEmpty) {
+      final matched = rooms
+          .where(
+            (room) =>
+                _firebaseSearchTags.any((tag) => _roomMatchesTag(room, tag)) ||
+                room.rating >= 4.5,
+          )
+          .toList();
+      if (matched.isNotEmpty) return matched;
+    }
+    return rooms.where((room) => room.rating >= 4.5).toList();
+  }
+
+  // 2. Danh sách cho phần bên dưới: Lọc dựa trên cả RoomItem lẫn RoomExtraDetail
   List<RoomItem> get _allFilteredRooms {
-    return mockRooms.where((room) {
-      // Lọc theo từ khóa thanh tìm kiếm (Hỗ trợ không dấu)
+    return _approvedAvailableRooms.where((room) {
+      final extra = room.extraDetail;
+      final extraDescription = extra?.description ?? '';
+      final extraAmenities = room.amenities;
+
+      // Lọc theo từ khóa thanh tìm kiếm (Hỗ trợ không dấu, tìm trong cả RoomExtraDetail)
       if (_searchKeyword.trim().isNotEmpty) {
-        final normalizedQuery = _removeVietnameseDiacritics(_searchKeyword.trim());
-        final matchTitle = _removeVietnameseDiacritics(room.title).contains(normalizedQuery);
-        final matchAddress = _removeVietnameseDiacritics(room.address).contains(normalizedQuery);
-        final matchRegion = _removeVietnameseDiacritics(room.region).contains(normalizedQuery);
+        final normalizedQuery =
+            removeVietnameseDiacritics(_searchKeyword.trim());
+        final matchTitle =
+            removeVietnameseDiacritics(room.title).contains(normalizedQuery);
+        final matchAddress =
+            removeVietnameseDiacritics(room.address).contains(normalizedQuery);
+        final matchRegion =
+            removeVietnameseDiacritics(room.region).contains(normalizedQuery);
         final matchTags = room.tags.any(
-          (tag) => _removeVietnameseDiacritics(tag).contains(normalizedQuery),
+          (tag) => removeVietnameseDiacritics(tag).contains(normalizedQuery),
         );
+        final matchAmenities = extraAmenities.any(
+          (am) => removeVietnameseDiacritics(am).contains(normalizedQuery),
+        );
+        final matchDescription = removeVietnameseDiacritics(extraDescription)
+            .contains(normalizedQuery);
 
-        if (!matchTitle && !matchAddress && !matchRegion && !matchTags) {
+        if (!matchTitle &&
+            !matchAddress &&
+            !matchRegion &&
+            !matchTags &&
+            !matchAmenities &&
+            !matchDescription) {
           return false;
         }
       }
 
-      // Lọc theo Chip chọn nhanh trên màn hình chính
-      if (_selectedFilterIndex != 0) {
-        final selectedTag = _filters[_selectedFilterIndex];
-        if (selectedTag == 'Dưới 2 triệu' && room.price >= 2.0) return false;
-        if (selectedTag != 'Dưới 2 triệu' &&
-            !room.tags.contains(selectedTag) &&
-            !_removeVietnameseDiacritics(room.title)
-                .contains(_removeVietnameseDiacritics(selectedTag))) {
+      // Lọc theo Chip chọn nhanh trên màn hình chính (Lấy từ Firebase `search_tags` / `room.tags`)
+      if (_selectedQuickFilter != FilterModel.allOption) {
+        if (!_roomMatchesTag(room, _selectedQuickFilter)) {
           return false;
         }
       }
 
-      // Lọc theo Modal FilterModel
-      if (_currentFilter.region != 'Tất cả' && room.region != _currentFilter.region) {
+      // Lọc theo Khu vực (động toàn thành phố/vùng)
+      if (_currentFilter.region != FilterModel.allOption) {
+        final normSelectedRegion =
+            removeVietnameseDiacritics(_currentFilter.region);
+        final matchRoomRegion =
+            removeVietnameseDiacritics(room.region).contains(normSelectedRegion);
+        final matchAddressSegment = room.addressSegments.any(
+          (seg) => removeVietnameseDiacritics(seg).contains(normSelectedRegion),
+        );
+        if (!matchRoomRegion && !matchAddressSegment) {
+          return false;
+        }
+      }
+
+      // Lọc theo khoảng giá VNĐ
+      if (room.price < _currentFilter.minPrice) {
         return false;
       }
-      if (room.price < _currentFilter.minPrice || room.price > _currentFilter.maxPrice) {
+      if (_currentFilter.maxPrice < FilterModel.defaultMaxPrice &&
+          room.price > _currentFilter.maxPrice) {
         return false;
       }
-      if (room.area < _currentFilter.minArea || room.area > _currentFilter.maxArea) {
+
+      // Lọc theo diện tích
+      if (room.area < _currentFilter.minArea) {
         return false;
       }
-      if (_currentFilter.furniture != 'Tất cả' && room.furniture != _currentFilter.furniture) {
+      if (_currentFilter.maxArea < FilterModel.defaultMaxArea &&
+          room.area > _currentFilter.maxArea) {
         return false;
       }
+
+      // Lọc theo tình trạng nội thất (nếu được chọn)
+      if (_currentFilter.furniture != FilterModel.allOption &&
+          removeVietnameseDiacritics(room.furniture) !=
+              removeVietnameseDiacritics(_currentFilter.furniture)) {
+        return false;
+      }
+
+      // Lọc theo các key tiện ích (`amenities` tách bằng dấu phẩy từ bài đăng)
+      if (_currentFilter.selectedAmenities.isNotEmpty) {
+        final normalizedRoomAmenities =
+            extraAmenities.map(removeVietnameseDiacritics).toList();
+        for (final reqAmenity in _currentFilter.selectedAmenities) {
+          final normReq = removeVietnameseDiacritics(reqAmenity);
+          final hasAmenity = normalizedRoomAmenities.any(
+            (am) => am.contains(normReq) || normReq.contains(am),
+          );
+          if (!hasAmenity) return false;
+        }
+      }
+
+      // Lọc theo đánh giá tối thiểu
       if (room.rating < _currentFilter.minRating) {
         return false;
       }
-      if (_currentFilter.hotSearch != null && _currentFilter.hotSearch!.isNotEmpty) {
-        final hotKw = _removeVietnameseDiacritics(_currentFilter.hotSearch!);
-        final matchTitle = _removeVietnameseDiacritics(room.title).contains(hotKw);
-        final matchAddress = _removeVietnameseDiacritics(room.address).contains(hotKw);
-        final matchTags = room.tags.any((t) => _removeVietnameseDiacritics(t).contains(hotKw));
-        if (!matchTitle && !matchAddress && !matchTags) return false;
+
+      // Lọc theo Tag tìm kiếm phổ biến trong Modal
+      if (_currentFilter.hotSearch != null &&
+          _currentFilter.hotSearch!.isNotEmpty) {
+        if (!_roomMatchesTag(room, _currentFilter.hotSearch!)) {
+          return false;
+        }
       }
 
       return true;
@@ -348,7 +468,7 @@ class _HomeScreenState extends State<CounterScreen> {
     _searchController.clear();
     setState(() {
       _currentFilter = const FilterModel();
-      _selectedFilterIndex = 0;
+      _selectedQuickFilter = FilterModel.allOption;
       _searchKeyword = '';
     });
     FocusScope.of(context).unfocus();
@@ -357,6 +477,7 @@ class _HomeScreenState extends State<CounterScreen> {
   @override
   Widget build(BuildContext context) {
     final allRooms = _allFilteredRooms;
+    final topRooms = _topRecommendedRooms;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FA),
@@ -368,6 +489,11 @@ class _HomeScreenState extends State<CounterScreen> {
           style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold),
         ),
         actions: [
+          IconButton(
+            tooltip: 'Tải lại dữ liệu',
+            icon: const Icon(Icons.refresh, color: Colors.black87),
+            onPressed: _subscribeFirestoreStreams,
+          ),
           IconButton(
             icon: const Icon(Icons.notifications_none, color: Colors.black87),
             onPressed: () {},
@@ -381,43 +507,64 @@ class _HomeScreenState extends State<CounterScreen> {
             // 1. THANH TÌM KIẾM & NÚT MỞ MODAL BỘ LỌC
             _buildSearchBar(),
 
-            // 2. DANH MỤC CHỌN NHANH (CHIPS)
+            // 2. DANH MỤC CHỌN NHANH (CHIPS LẤY ĐỘNG TỪ FIREBASE `search_tags` & DỮ LIỆU PHÒNG)
             _buildFilterList(),
 
-            // 3. HÀNG NGANG ĐẦU TIÊN: TOP TÌM KIẾM (Ẩn khi đang lọc để tập trung kết quả)
-            if (!_isFiltering) ...[
+            if (_isLoading)
               const Padding(
-                padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
-                child: Text(
-                  '🔥 Top tìm kiếm & Đề xuất',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                padding: EdgeInsets.symmetric(vertical: 60),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (_errorMessage != null)
+              Padding(
+                padding: const EdgeInsets.all(24),
+                child: Center(
+                  child: Text(
+                    _errorMessage!,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.redAccent),
+                  ),
+                ),
+              )
+            else ...[
+              // 3. HÀNG NGANG ĐẦU TIÊN: TOP TÌM KIẾM (Ẩn khi đang lọc hoặc khi danh sách trống)
+              if (!_isFiltering && topRooms.isNotEmpty) ...[
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: Text(
+                    '🔥 Top tìm kiếm & Đề xuất',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                _buildHorizontalTopList(topRooms),
+              ],
+
+              // 4. DANH SÁCH TẤT CẢ CÁC TRỌ TRẢI DỌC XUỐNG DƯỚI
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      _isFiltering
+                          ? 'Kết quả tìm kiếm (${allRooms.length} phòng)'
+                          : 'Danh sách phòng trọ (${allRooms.length} phòng)',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    if (_isFiltering)
+                      TextButton.icon(
+                        onPressed: _resetAllFilters,
+                        icon: const Icon(Icons.refresh, size: 16),
+                        label: const Text('Xóa bộ lọc'),
+                      ),
+                  ],
                 ),
               ),
-              _buildHorizontalTopList(_topRecommendedRooms),
+              _buildVerticalAllRoomsList(allRooms),
             ],
-
-            // 4. DANH SÁCH TẤT CẢ CÁC TRỌ TRẢI DỌC XUỐNG DƯỚI
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    _isFiltering
-                        ? 'Kết quả tìm kiếm (${allRooms.length} phòng)'
-                        : 'Danh sách phòng trọ',
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                  if (_isFiltering)
-                    TextButton.icon(
-                      onPressed: _resetAllFilters,
-                      icon: const Icon(Icons.refresh, size: 16),
-                      label: const Text('Xóa bộ lọc'),
-                    ),
-                ],
-              ),
-            ),
-            _buildVerticalAllRoomsList(allRooms),
 
             const SizedBox(height: 24),
 
@@ -442,7 +589,9 @@ class _HomeScreenState extends State<CounterScreen> {
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: _searchKeyword.isNotEmpty ? Colors.blueAccent : Colors.grey.shade300,
+                  color: _searchKeyword.isNotEmpty
+                      ? Colors.blueAccent
+                      : Colors.grey.shade300,
                 ),
               ),
               child: TextField(
@@ -463,12 +612,16 @@ class _HomeScreenState extends State<CounterScreen> {
                 },
                 decoration: InputDecoration(
                   icon: const Icon(Icons.search, color: Colors.grey),
-                  hintText: 'Tìm theo tên phòng, đường, khu vực...',
+                  hintText: 'Tìm theo tên phòng, đường, khu vực, tiện ích...',
                   hintStyle: const TextStyle(fontSize: 14, color: Colors.grey),
                   border: InputBorder.none,
                   suffixIcon: _searchController.text.isNotEmpty
                       ? IconButton(
-                          icon: const Icon(Icons.clear, size: 18, color: Colors.grey),
+                          icon: const Icon(
+                            Icons.clear,
+                            size: 18,
+                            color: Colors.grey,
+                          ),
                           onPressed: () {
                             _debounce?.cancel();
                             _searchController.clear();
@@ -485,14 +638,19 @@ class _HomeScreenState extends State<CounterScreen> {
           Container(
             decoration: BoxDecoration(
               // Đổi sang màu cam khi đang có bộ lọc nâng cao được kích hoạt
-              color: _currentFilter.isDefault ? Colors.blueAccent : Colors.orangeAccent,
+              color: _currentFilter.isDefault
+                  ? Colors.blueAccent
+                  : Colors.orangeAccent,
               borderRadius: BorderRadius.circular(12),
             ),
             child: IconButton(
               icon: const Icon(Icons.tune, color: Colors.white),
               onPressed: () async {
                 FocusScope.of(context).unfocus();
-                final FilterModel? result = await _openFilterModal(context, _currentFilter);
+                final FilterModel? result = await _openFilterModal(
+                  context,
+                  _currentFilter,
+                );
                 if (result != null) {
                   _applyFilter(result);
                 }
@@ -504,21 +662,25 @@ class _HomeScreenState extends State<CounterScreen> {
     );
   }
 
-  // Component: Danh mục lọc ngang
+  // Component: Danh mục lọc ngang lấy động từ `_quickFilterChips`
   Widget _buildFilterList() {
+    final chips = _quickFilterChips;
+    if (chips.length <= 1) return const SizedBox.shrink();
+
     return SizedBox(
       height: 40,
       child: ListView.separated(
         padding: const EdgeInsets.symmetric(horizontal: 16),
         scrollDirection: Axis.horizontal,
-        itemCount: _filters.length,
+        itemCount: chips.length,
         // ignore: unnecessary_underscores
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (context, index) {
-          final isSelected = _selectedFilterIndex == index;
+          final label = chips[index];
+          final isSelected = _selectedQuickFilter == label;
           return ChoiceChip(
             label: Text(
-              _filters[index],
+              label,
               style: TextStyle(
                 color: isSelected ? Colors.white : Colors.black87,
                 fontSize: 13,
@@ -527,9 +689,11 @@ class _HomeScreenState extends State<CounterScreen> {
             selected: isSelected,
             selectedColor: Colors.blueAccent,
             backgroundColor: Colors.white,
-            side: BorderSide(color: isSelected ? Colors.blueAccent : Colors.grey.shade300),
-            onSelected: (selected) {
-              setState(() => _selectedFilterIndex = index);
+            side: BorderSide(
+              color: isSelected ? Colors.blueAccent : Colors.grey.shade300,
+            ),
+            onSelected: (_) {
+              setState(() => _selectedQuickFilter = label);
             },
           );
         },
@@ -595,7 +759,7 @@ class _HomeScreenState extends State<CounterScreen> {
     );
   }
 
-  // Component: Card hiển thị từng phòng trọ
+  // Component: Card hiển thị từng phòng trọ (Hỗ trợ cả ảnh Base64 và HTTPS, giá VNĐ có dấu chấm)
   Widget _buildRoomCard(RoomItem room, {required double imageHeight}) {
     return Card(
       elevation: 2,
@@ -605,7 +769,7 @@ class _HomeScreenState extends State<CounterScreen> {
       child: InkWell(
         onTap: () async {
           if (!await requireLogin(context)) return;
-          if (!context.mounted) return; // Đảm bảo an toàn context sau lệnh await
+          if (!context.mounted) return;
           Navigator.push(
             context,
             MaterialPageRoute(
@@ -616,16 +780,11 @@ class _HomeScreenState extends State<CounterScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Image.network(
-              room.imageURL,
+            RoomImageView(
+              source: room.imageURL,
               height: imageHeight,
               width: double.infinity,
               fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => Container(
-                height: imageHeight,
-                color: Colors.grey[300],
-                child: const Icon(Icons.broken_image, size: 36, color: Colors.grey),
-              ),
             ),
             Padding(
               padding: const EdgeInsets.all(10.0),
@@ -635,17 +794,25 @@ class _HomeScreenState extends State<CounterScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        '${room.price.toStringAsFixed(1)} triệu/th',
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.redAccent,
+                      Flexible(
+                        child: Text(
+                          '${formatCurrencyVnd(room.price)} đ/th',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.redAccent,
+                          ),
                         ),
                       ),
+                      const SizedBox(width: 4),
                       Text(
                         '${room.area.toInt()} m²',
-                        style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey.shade600,
+                        ),
                       ),
                     ],
                   ),
@@ -654,19 +821,29 @@ class _HomeScreenState extends State<CounterScreen> {
                     room.title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   Row(
                     children: [
-                      Icon(Icons.location_on_outlined, size: 13, color: Colors.grey.shade600),
+                      Icon(
+                        Icons.location_on_outlined,
+                        size: 13,
+                        color: Colors.grey.shade600,
+                      ),
                       const SizedBox(width: 2),
                       Expanded(
                         child: Text(
                           room.address,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey.shade600,
+                          ),
                         ),
                       ),
                     ],
@@ -680,33 +857,41 @@ class _HomeScreenState extends State<CounterScreen> {
     );
   }
 
-  // Modal bộ lọc chi tiết
+  // Modal bộ lọc chi tiết: Toàn bộ danh sách Khu vực, Tags, Tiện ích, Nội thất được lấy động
   Future<FilterModel?> _openFilterModal(
     BuildContext context,
     FilterModel initialFilter,
   ) {
-    RangeValues priceRange = RangeValues(initialFilter.minPrice, initialFilter.maxPrice);
-    RangeValues areaRange = RangeValues(initialFilter.minArea, initialFilter.maxArea);
-    String selectedArea = initialFilter.region;
-    String furnitureOption = initialFilter.furniture;
+    final List<String> availableRegions = _dynamicRegions;
+    final List<String> availableHotTags = _dynamicQuickTags;
+    final List<String> availableAmenityKeys = _dynamicAmenityKeys;
+    final List<String> availableFurnitureOptions = _dynamicFurnitureOptions;
+
+    RangeValues priceRange = RangeValues(
+      initialFilter.minPrice.clamp(
+        FilterModel.defaultMinPrice,
+        FilterModel.defaultMaxPrice,
+      ),
+      initialFilter.maxPrice.clamp(
+        FilterModel.defaultMinPrice,
+        FilterModel.defaultMaxPrice,
+      ),
+    );
+    RangeValues areaRange = RangeValues(
+      initialFilter.minArea,
+      initialFilter.maxArea,
+    );
+    String selectedArea = availableRegions.contains(initialFilter.region)
+        ? initialFilter.region
+        : FilterModel.allOption;
+    String furnitureOption =
+        availableFurnitureOptions.contains(initialFilter.furniture)
+            ? initialFilter.furniture
+            : FilterModel.allOption;
+    Set<String> selectedAmenities =
+        Set<String>.from(initialFilter.selectedAmenities);
     int selectedRating = initialFilter.minRating;
     String? selectedHotSearch = initialFilter.hotSearch;
-
-    final List<String> areas = [
-      'Tất cả',
-      'Hà Đông',
-      'Yên Nghĩa',
-      'Dương Nội',
-      'Thanh Xuân',
-      'Cầu Giấy',
-    ];
-    final List<String> hotSearches = [
-      'Gần Phenikaa',
-      'Dưới 2 triệu',
-      'Có gác xép',
-      'Không chung chủ',
-      'Chung cư mini',
-    ];
 
     return showModalBottomSheet<FilterModel>(
       context: context,
@@ -730,15 +915,25 @@ class _HomeScreenState extends State<CounterScreen> {
                       children: [
                         const Text(
                           'Bộ lọc tìm kiếm',
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                         TextButton(
                           onPressed: () {
                             setModalState(() {
-                              priceRange = const RangeValues(0.5, 15.0);
-                              areaRange = const RangeValues(10.0, 80.0);
-                              selectedArea = 'Tất cả';
-                              furnitureOption = 'Tất cả';
+                              priceRange = const RangeValues(
+                                FilterModel.defaultMinPrice,
+                                FilterModel.defaultMaxPrice,
+                              );
+                              areaRange = const RangeValues(
+                                FilterModel.defaultMinArea,
+                                FilterModel.defaultMaxArea,
+                              );
+                              selectedArea = FilterModel.allOption;
+                              furnitureOption = FilterModel.allOption;
+                              selectedAmenities.clear();
                               selectedRating = 0;
                               selectedHotSearch = null;
                             });
@@ -753,35 +948,51 @@ class _HomeScreenState extends State<CounterScreen> {
                     child: ListView(
                       padding: const EdgeInsets.all(16),
                       children: [
-                        const Text('Tìm kiếm phổ biến', style: TextStyle(fontWeight: FontWeight.w600)),
-                        const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: hotSearches.map((tag) {
-                            final isSelected = selectedHotSearch == tag;
-                            return ChoiceChip(
-                              label: Text(tag),
-                              selected: isSelected,
-                              onSelected: (selected) {
-                                setModalState(() {
-                                  selectedHotSearch = selected ? tag : null;
-                                });
-                              },
-                            );
-                          }).toList(),
+                        if (availableHotTags.isNotEmpty) ...[
+                          const Text(
+                            'Tìm kiếm phổ biến',
+                            style: TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: availableHotTags.map((tag) {
+                              final isSelected = selectedHotSearch == tag;
+                              return ChoiceChip(
+                                label: Text(tag),
+                                selected: isSelected,
+                                onSelected: (selected) {
+                                  setModalState(() {
+                                    selectedHotSearch = selected ? tag : null;
+                                  });
+                                },
+                              );
+                            }).toList(),
+                          ),
+                          const SizedBox(height: 20),
+                        ],
+                        const Text(
+                          'Khu vực',
+                          style: TextStyle(fontWeight: FontWeight.w600),
                         ),
-                        const SizedBox(height: 20),
-                        const Text('Khu vực', style: TextStyle(fontWeight: FontWeight.w600)),
                         const SizedBox(height: 8),
                         DropdownButtonFormField<String>(
                           value: selectedArea,
                           decoration: InputDecoration(
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
                           ),
-                          items: areas.map((area) {
-                            return DropdownMenuItem(value: area, child: Text(area));
+                          items: availableRegions.map((area) {
+                            return DropdownMenuItem(
+                              value: area,
+                              child: Text(area),
+                            );
                           }).toList(),
                           onChanged: (value) {
                             if (value != null) {
@@ -793,21 +1004,30 @@ class _HomeScreenState extends State<CounterScreen> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            const Text('Khoảng giá', style: TextStyle(fontWeight: FontWeight.w600)),
-                            Text(
-                              '${priceRange.start.toStringAsFixed(1)} - ${priceRange.end.toStringAsFixed(1)} tr/tháng',
-                              style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold),
+                            const Text(
+                              'Khoảng giá (VNĐ/tháng)',
+                              style: TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                            Flexible(
+                              child: Text(
+                                '${formatCurrencyVnd(priceRange.start)} - ${formatCurrencyVnd(priceRange.end)} đ',
+                                textAlign: TextAlign.right,
+                                style: const TextStyle(
+                                  color: Colors.redAccent,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                             ),
                           ],
                         ),
                         RangeSlider(
                           values: priceRange,
-                          min: 0.5,
-                          max: 15.0,
+                          min: FilterModel.defaultMinPrice,
+                          max: FilterModel.defaultMaxPrice,
                           divisions: 29,
                           labels: RangeLabels(
-                            '${priceRange.start.toStringAsFixed(1)} tr',
-                            '${priceRange.end.toStringAsFixed(1)} tr',
+                            '${formatCurrencyVnd(priceRange.start)} đ',
+                            '${formatCurrencyVnd(priceRange.end)} đ',
                           ),
                           onChanged: (values) {
                             setModalState(() => priceRange = values);
@@ -817,17 +1037,23 @@ class _HomeScreenState extends State<CounterScreen> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            const Text('Diện tích', style: TextStyle(fontWeight: FontWeight.w600)),
+                            const Text(
+                              'Diện tích',
+                              style: TextStyle(fontWeight: FontWeight.w600),
+                            ),
                             Text(
                               '${areaRange.start.round()} - ${areaRange.end.round()} m²',
-                              style: const TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold),
+                              style: const TextStyle(
+                                color: Colors.blueAccent,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ],
                         ),
                         RangeSlider(
                           values: areaRange,
-                          min: 10.0,
-                          max: 80.0,
+                          min: FilterModel.defaultMinArea,
+                          max: FilterModel.defaultMaxArea,
                           divisions: 14,
                           labels: RangeLabels(
                             '${areaRange.start.round()} m²',
@@ -837,34 +1063,81 @@ class _HomeScreenState extends State<CounterScreen> {
                             setModalState(() => areaRange = values);
                           },
                         ),
-                        const SizedBox(height: 16),
-                        const Text('Nội thất', style: TextStyle(fontWeight: FontWeight.w600)),
-                        const SizedBox(height: 8),
-                        SegmentedButton<String>(
-                          segments: const [
-                            ButtonSegment(value: 'Tất cả', label: Text('Tất cả')),
-                            ButtonSegment(value: 'Full nội thất', label: Text('Full đồ')),
-                            ButtonSegment(value: 'Phòng trống', label: Text('Phòng trống')),
-                          ],
-                          selected: {furnitureOption},
-                          onSelectionChanged: (newSelection) {
-                            setModalState(() => furnitureOption = newSelection.first);
-                          },
-                        ),
+                        if (availableAmenityKeys.isNotEmpty) ...[
+                          const SizedBox(height: 16),
+                          const Text(
+                            'Tiện ích phòng (từ chi tiết phòng)',
+                            style: TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: availableAmenityKeys.map((amenityKey) {
+                              final isChecked =
+                                  selectedAmenities.contains(amenityKey);
+                              return FilterChip(
+                                label: Text(amenityKey),
+                                selected: isChecked,
+                                onSelected: (selected) {
+                                  setModalState(() {
+                                    if (selected) {
+                                      selectedAmenities.add(amenityKey);
+                                    } else {
+                                      selectedAmenities.remove(amenityKey);
+                                    }
+                                  });
+                                },
+                              );
+                            }).toList(),
+                          ),
+                        ],
+                        if (availableFurnitureOptions.length > 1) ...[
+                          const SizedBox(height: 16),
+                          const Text(
+                            'Nội thất',
+                            style: TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: availableFurnitureOptions.map((option) {
+                              final isSelected = furnitureOption == option;
+                              return ChoiceChip(
+                                label: Text(option),
+                                selected: isSelected,
+                                onSelected: (selected) {
+                                  if (selected) {
+                                    setModalState(
+                                      () => furnitureOption = option,
+                                    );
+                                  }
+                                },
+                              );
+                            }).toList(),
+                          ),
+                        ],
                         const SizedBox(height: 20),
-                        const Text('Đánh giá tối thiểu', style: TextStyle(fontWeight: FontWeight.w600)),
+                        const Text(
+                          'Đánh giá tối thiểu',
+                          style: TextStyle(fontWeight: FontWeight.w600),
+                        ),
                         const SizedBox(height: 8),
                         Row(
                           children: List.generate(5, (index) {
                             final star = index + 1;
                             return IconButton(
                               icon: Icon(
-                                star <= selectedRating ? Icons.star : Icons.star_border,
+                                star <= selectedRating
+                                    ? Icons.star
+                                    : Icons.star_border,
                                 color: Colors.amber,
                               ),
                               onPressed: () {
                                 setModalState(() {
-                                  selectedRating = (selectedRating == star) ? 0 : star;
+                                  selectedRating =
+                                      (selectedRating == star) ? 0 : star;
                                 });
                               },
                             );
@@ -878,7 +1151,11 @@ class _HomeScreenState extends State<CounterScreen> {
                     decoration: BoxDecoration(
                       color: Colors.white,
                       boxShadow: [
-                        BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4, offset: const Offset(0, -2)),
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.05),
+                          blurRadius: 4,
+                          offset: const Offset(0, -2),
+                        ),
                       ],
                     ),
                     child: SizedBox(
@@ -886,7 +1163,9 @@ class _HomeScreenState extends State<CounterScreen> {
                       height: 48,
                       child: ElevatedButton(
                         style: ElevatedButton.styleFrom(
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
                         ),
                         onPressed: () {
                           final resultFilter = FilterModel(
@@ -896,12 +1175,16 @@ class _HomeScreenState extends State<CounterScreen> {
                             minArea: areaRange.start,
                             maxArea: areaRange.end,
                             furniture: furnitureOption,
+                            selectedAmenities: selectedAmenities,
                             minRating: selectedRating,
                             hotSearch: selectedHotSearch,
                           );
                           Navigator.pop(context, resultFilter);
                         },
-                        child: const Text('Áp dụng bộ lọc', style: TextStyle(fontSize: 16)),
+                        child: const Text(
+                          'Áp dụng bộ lọc',
+                          style: TextStyle(fontSize: 16),
+                        ),
                       ),
                     ),
                   ),
@@ -940,7 +1223,7 @@ class _HomeScreenState extends State<CounterScreen> {
             style: TextStyle(color: Colors.white70, fontSize: 13),
           ),
           const Divider(color: Colors.white24, height: 24),
-                    const Text(
+          const Text(
             'Nhóm sinh viên thực hiện:',
             style: TextStyle(color: Colors.white60, fontSize: 12),
           ),
