@@ -1,8 +1,13 @@
 // lib/features/home_catalog/presentation/screens/room_detail_screen.dart
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
+import '../contact/models/contact_models.dart';
+import '../contact/services/interaction_service.dart';
+import '../contact/widgets/interaction_ui.dart';
+import '../contact/widgets/rating_stars.dart';
+import '../contact/widgets/review_form.dart';
+import '../contact/widgets/room_actions.dart';
 import 'models/room_item.dart';
 
 class RoomDetailScreen extends StatefulWidget {
@@ -18,14 +23,63 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
   late Future<RoomExtraDetail> _detailFuture;
   late final PageController _pageController;
   int _currentImageIndex = 0;
+  String? _selectedAppointmentIdForReview;
 
   @override
   void initState() {
     super.initState();
     _pageController = PageController();
+    // Đảm bảo phòng hiện tại được đăng ký trong InteractionService để Chat / Đặt lịch hoạt động ngay
+    _syncRoomWithInteractionService(widget.room.ownerId);
     // Kích hoạt truy vấn Firebase lấy thông tin chi tiết & chủ trọ theo ID bài đăng (postId)
-    _detailFuture =
-        RoomDetailFirebaseService.instance.fetchAndSyncRoomDetail(widget.room);
+    _detailFuture = RoomDetailFirebaseService.instance
+        .fetchAndSyncRoomDetail(widget.room)
+        .then((detail) {
+      _syncRoomWithInteractionService(
+        detail.ownerId.isNotEmpty ? detail.ownerId : widget.room.ownerId,
+      );
+      return detail;
+    });
+  }
+
+  /// Đồng bộ phòng sang `InteractionService` nếu phòng chưa có trong danh sách của module `contact/`
+  void _syncRoomWithInteractionService(String rawOwnerId) {
+    final service = InteractionService.instance;
+    final resolvedOwnerId = rawOwnerId.trim().isNotEmpty
+        ? rawOwnerId.trim()
+        : (service.ownerOf(widget.room.id) ?? '');
+    if (resolvedOwnerId.isEmpty) return;
+
+    if (service.ownerOf(widget.room.id) == null ||
+        service.rooms[widget.room.id] == null) {
+      // Module contact/ lưu giá theo đơn vị triệu VNĐ (fmtVnd nhân 1.000.000)
+      final normalizedPrice = widget.room.price >= 100000
+          ? widget.room.price / 1000000
+          : widget.room.price;
+      service.registerRoom(
+        RoomItem(
+          id: widget.room.id,
+          ownerId: resolvedOwnerId,
+          title: widget.room.title,
+          region: widget.room.region,
+          address: widget.room.address,
+          price: normalizedPrice,
+          area: widget.room.area,
+          imageUrl: widget.room.imageURL,
+          imageUrls: widget.room.allImages,
+          furniture: widget.room.furniture,
+          rating: widget.room.rating,
+          tags: widget.room.tags,
+          availability: widget.room.availability,
+          reviewStatus: widget.room.reviewStatus,
+          isHidden: widget.room.isHidden,
+          contact: widget.room.contact,
+          extraDetail: widget.room.extraDetail,
+          createdAt: widget.room.createdAt,
+        ),
+        ownerId: resolvedOwnerId,
+      );
+    }
   }
 
   @override
@@ -81,18 +135,6 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
         _detailFuture = Future.value(updated);
       });
     }
-  }
-
-  // Xử lý sự kiện liên hệ (Tương thích cả Web và Mobile mà không cần cài thêm thư viện ngoài)
-  void _handleContact(BuildContext context, String type, String value) {
-    Clipboard.setData(ClipboardData(text: value));
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Đã sao chép số $type ($value)'),
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 2),
-      ),
-    );
   }
 
   @override
@@ -210,6 +252,11 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
                           ),
                         ],
                       ),
+                      const SizedBox(height: 10),
+
+                      // Hiển thị tóm tắt điểm đánh giá sao từ InteractionService
+                      _buildRatingSummaryRow(room.id),
+
                       const Divider(height: 32),
 
                       // 4. PHẦN DỮ LIỆU TẢI TỪ FIREBASE `room_detail` (CHỦ TRỌ, TIỆN ÍCH, MÔ TẢ)
@@ -326,11 +373,25 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
                             ),
                             const SizedBox(height: 10),
                             _buildLandlordCard(detail),
-                            const SizedBox(
-                              height: 80,
-                            ), // Khoảng trống tránh bị che bởi BottomBar
                           ],
                         ),
+
+                      const Divider(height: 36),
+
+                      // 5. KHỐI ĐÁNH GIÁ PHÒNG & FORM THÊM ĐÁNH GIÁ (NỐI VỚI MODULE CONTACT/)
+                      _buildReviewSection(room.id),
+
+                      const SizedBox(height: 12),
+
+                      // Nút báo cáo tin đăng từ contact/widgets/room_actions.dart
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: ReportButton(roomId: room.id),
+                      ),
+
+                      const SizedBox(
+                        height: 80,
+                      ), // Khoảng trống tránh bị che bởi BottomBar
                     ],
                   ),
                 ),
@@ -338,8 +399,180 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
             ],
           ),
 
-          // 5. THANH NÚT BẤM LIÊN HỆ CỐ ĐỊNH Ở ĐÁY MÀN HÌNH (STICKY ACTION BAR)
-          bottomNavigationBar: _buildBottomContactBar(detail),
+          // 6. THANH 2 NÚT LIÊN HỆ (CHAT) + ĐẶT LỊCH Ở ĐÁY MÀN HÌNH (TỪ MODULE CONTACT/)
+          bottomNavigationBar: RoomActionBar(roomId: room.id),
+        );
+      },
+    );
+  }
+
+  /// Hàng hiển thị nhanh tóm tắt số sao đánh giá (`ratingSummary`) ngay dưới địa chỉ phòng
+  Widget _buildRatingSummaryRow(String roomId) {
+    final service = InteractionService.instance;
+    return ListenableBuilder(
+      listenable: service,
+      builder: (context, _) {
+        final summary = service.ratingSummary(roomId);
+        return Row(
+          children: [
+            RatingStars(rating: summary.average, size: 18),
+            const SizedBox(width: 6),
+            Text(
+              summary.count == 0
+                  ? 'Chưa có đánh giá'
+                  : '${summary.average.toStringAsFixed(1)} (${summary.count} đánh giá)',
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: IStyle.muted,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Khối hiển thị danh sách đánh giá (`ReviewList`) kèm form thêm đánh giá (`ReviewForm`)
+  /// tuân thủ đúng luật nghiệp vụ của `contact/`: chỉ người thuê có lịch hẹn `completed`
+  /// chưa đánh giá tại phòng này mới hiển thị form gửi đánh giá.
+  Widget _buildReviewSection(String roomId) {
+    final service = InteractionService.instance;
+    return ListenableBuilder(
+      listenable: service,
+      builder: (context, _) {
+        final eligibleAppointments = service.role == UserRole.tenant
+            ? service
+                .appointmentsForCurrentUser()
+                .where(
+                  (a) =>
+                      a.roomId == roomId &&
+                      a.status == AppointmentStatus.completed &&
+                      service.reviewForAppointment(a.id) == null,
+                )
+                .toList()
+            : <Appointment>[];
+
+        final hasCompletedAppointmentsForRoom =
+            service.role == UserRole.tenant &&
+                service.appointmentsForCurrentUser().any(
+                      (a) =>
+                          a.roomId == roomId &&
+                          a.status == AppointmentStatus.completed,
+                    );
+
+        Appointment? selectedAppointment;
+        if (eligibleAppointments.isNotEmpty) {
+          selectedAppointment = eligibleAppointments.firstWhere(
+            (a) => a.id == _selectedAppointmentIdForReview,
+            orElse: () => eligibleAppointments.first,
+          );
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Danh sách đánh giá + điểm trung bình từ contact/widgets/review_list.dart
+            ReviewList(roomId: roomId),
+            const SizedBox(height: 16),
+
+            // Form thêm đánh giá nếu người thuê có lịch hẹn xem phòng đã hoàn thành & chưa đánh giá
+            if (selectedAppointment != null)
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: cardDecoration(),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Viết đánh giá của bạn',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    if (eligibleAppointments.length == 1)
+                      Text(
+                        'Lịch hẹn đã hoàn thành: ${fmtDateTime(selectedAppointment.appointmentTime)}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: IStyle.muted,
+                        ),
+                      )
+                    else ...[
+                      const SizedBox(height: 4),
+                      DropdownButtonFormField<String>(
+                        value: selectedAppointment.id,
+                        decoration: InputDecoration(
+                          labelText: 'Chọn lịch hẹn đã hoàn thành',
+                          isDense: true,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                        items: eligibleAppointments.map((appt) {
+                          return DropdownMenuItem<String>(
+                            value: appt.id,
+                            child: Text(
+                              'Lịch hẹn ${fmtDateTime(appt.appointmentTime)}',
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                          );
+                        }).toList(),
+                        onChanged: (value) {
+                          setState(() {
+                            _selectedAppointmentIdForReview = value;
+                          });
+                        },
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    ReviewForm(
+                      key: ValueKey('review_form_${selectedAppointment.id}'),
+                      appointmentId: selectedAppointment.id,
+                      onSubmitted: () {
+                        if (mounted) {
+                          setState(() {
+                            _selectedAppointmentIdForReview = null;
+                          });
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              )
+            else if (service.role == UserRole.tenant)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: IStyle.primarySoft,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.info_outline,
+                      size: 18,
+                      color: IStyle.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        hasCompletedAppointmentsForRoom
+                            ? 'Bạn đã đánh giá tất cả lịch hẹn hoàn thành của phòng này.'
+                            : 'Đặt lịch và hoàn thành xem phòng để viết đánh giá cho phòng trọ này.',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: IStyle.primary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
         );
       },
     );
@@ -534,85 +767,6 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
             ),
           );
         },
-      ),
-    );
-  }
-
-  Widget _buildBottomContactBar(RoomExtraDetail? detail) {
-    final phone = detail?.landlordPhone.isNotEmpty == true
-        ? detail!.landlordPhone
-        : (widget.room.contact.isNotEmpty
-            ? widget.room.contact
-            : 'Chưa cập nhật');
-    final zalo = detail?.landlordZalo.isNotEmpty == true
-        ? detail!.landlordZalo
-        : phone;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 8,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      child: SafeArea(
-        child: Row(
-          children: [
-            // Nút Chat Zalo
-            Expanded(
-              child: OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 13),
-                  side: const BorderSide(
-                    color: Colors.blueAccent,
-                    width: 1.5,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-                onPressed: () => _handleContact(context, 'liên lạc', zalo),
-                icon: const Icon(
-                  Icons.chat_bubble_outline,
-                  color: Colors.blueAccent,
-                ),
-                label: const Text(
-                  'Chat',
-                  style: TextStyle(
-                    color: Colors.blueAccent,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            // Nút Gọi điện trực tiếp
-            Expanded(
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green.shade600,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 13),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-                onPressed: () => _handleContact(context, 'Điện thoại', phone),
-                icon: const Icon(Icons.phone_in_talk),
-                label: Text(
-                  'Gọi $phone',
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

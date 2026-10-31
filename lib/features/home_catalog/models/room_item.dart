@@ -9,12 +9,16 @@ import 'package:flutter/material.dart';
 
 import '../../../core/base/base_entity.dart';
 import '../../../core/base/entity_registry.dart';
+import '../../contact/models/review.dart';
+import '../../contact/services/interaction_service.dart';
 
 const String kPostImagePrefix = 'data:image/jpeg;base64,';
 
-/// Định dạng giá tiền VNĐ có dấu chấm ngăn cách hàng nghìn (VD: 3.500.000)
+/// Định dạng giá tiền VNĐ có dấu chấm ngăn cách hàng nghìn (VD: 3.500.000).
+/// Tự động tương thích cả khi `value` lưu theo đơn vị triệu (VD: 2.8) từ module `contact/`.
 String formatCurrencyVnd(num value) {
-  final digits = value.round().toString();
+  final normalized = (value > 0 && value < 1000) ? value * 1000000 : value;
+  final digits = normalized.round().toString();
   return digits.replaceAllMapped(
     RegExp(r'(\d)(?=(\d{3})+(?!\d))'),
     (match) => '${match[1]}.',
@@ -341,6 +345,11 @@ class RoomExtraDetail {
     final rawFurniture = data['furniture']?.toString().trim() ?? '';
     final parsedTags = parseCommaSeparatedKeys(data['tags']);
 
+    final summary = InteractionService.instance.ratingSummary(postId);
+    final resolvedRating = summary.count > 0
+        ? summary.average
+        : ((data['rating'] as num?)?.toDouble() ?? 5.0);
+
     return RoomExtraDetail(
       postId: postId,
       ownerId:
@@ -363,7 +372,7 @@ class RoomExtraDetail {
       totalRoomsOwned: (data['totalRoomsOwned'] as num?)?.toInt() ?? 1,
       region: region,
       furniture: rawFurniture,
-      rating: (data['rating'] as num?)?.toDouble() ?? 5.0,
+      rating: resolvedRating,
       tags: parsedTags,
     );
   }
@@ -417,7 +426,7 @@ class RoomItem extends BaseEntity<String> {
   final String title;
   final String region;
   final String address;
-  final double price; // Đơn vị: VNĐ / tháng
+  final double price; // Đơn vị: VNĐ / tháng (hoặc triệu VNĐ nếu từ contact/)
   final double area; // m²
   final String imageUrl;
   final List<String> imageUrls;
@@ -450,6 +459,19 @@ class RoomItem extends BaseEntity<String> {
     this.extraDetail,
     DateTime? createdAt,
   }) : super(id: id, createdAt: createdAt);
+
+  /// Số liệu đánh giá thực tế (`average`, `count`) từ `InteractionService` (module `contact/`)
+  RatingSummary get ratingSummary =>
+      InteractionService.instance.ratingSummary(id);
+
+  /// Điểm sao ưu tiên lấy từ đánh giá thực tế của người thuê; nếu chưa có đánh giá thì dùng `rating`
+  double get effectiveRating {
+    final summary = ratingSummary;
+    return summary.count > 0 ? summary.average : rating;
+  }
+
+  /// Số lượt đánh giá của phòng từ module `contact/`
+  int get reviewCount => ratingSummary.count;
 
   /// Giữ getter `imageURL` (ảnh bìa) tương thích với thẻ phòng ở trang chủ
   String get imageURL => imageUrl.isNotEmpty
@@ -534,13 +556,17 @@ class RoomItem extends BaseEntity<String> {
       };
 
   factory RoomItem.fromJson(Map<String, dynamic> json) {
+    final id = (json['id'] ?? '').toString();
     final urls = json['imageUrls'] is List
         ? List<String>.from((json['imageUrls'] as List).whereType<String>())
         : <String>[];
     final primaryImage = (json['imageUrl'] ?? json['imageURL'] ?? '').toString();
     final address = (json['address'] ?? '').toString();
+    final summary = id.isNotEmpty
+        ? InteractionService.instance.ratingSummary(id)
+        : const RatingSummary(average: 0, count: 0);
     return RoomItem(
-      id: (json['id'] ?? '').toString(),
+      id: id,
       ownerId: (json['ownerId'] ?? '').toString(),
       title: (json['title'] ?? '').toString(),
       region: extractDynamicRegionFromAddress(
@@ -555,7 +581,9 @@ class RoomItem extends BaseEntity<String> {
           : (urls.isNotEmpty ? urls.first : ''),
       imageUrls: urls,
       furniture: (json['furniture'] ?? '').toString(),
-      rating: (json['rating'] as num?)?.toDouble() ?? 5.0,
+      rating: summary.count > 0
+          ? summary.average
+          : ((json['rating'] as num?)?.toDouble() ?? 5.0),
       tags: parseCommaSeparatedKeys(json['tags']),
       availability: (json['availability'] ?? 'available').toString(),
       reviewStatus: (json['reviewStatus'] ?? 'approved').toString(),
@@ -590,9 +618,10 @@ class RoomItem extends BaseEntity<String> {
       parsedCreatedAt = BaseEntity.parseDate(rawCreated);
     }
 
-    return RoomItem(
+    final resolvedOwnerId = (postData['ownerId'] ?? detail.ownerId).toString();
+    final item = RoomItem(
       id: postDoc.id,
-      ownerId: (postData['ownerId'] ?? '').toString(),
+      ownerId: resolvedOwnerId,
       title: (postData['title'] ?? '').toString(),
       region: detail.region,
       address: (postData['address'] ?? '').toString(),
@@ -610,6 +639,38 @@ class RoomItem extends BaseEntity<String> {
       extraDetail: detail,
       createdAt: parsedCreatedAt,
     );
+
+    // Đồng bộ phòng vào InteractionService nếu chưa có để hỗ trợ Chat / Đặt lịch
+    if (resolvedOwnerId.isNotEmpty &&
+        InteractionService.instance.ownerOf(item.id) == null) {
+      final normalizedPrice =
+          item.price >= 100000 ? item.price / 1000000 : item.price;
+      InteractionService.instance.registerRoom(
+        RoomItem(
+          id: item.id,
+          ownerId: resolvedOwnerId,
+          title: item.title,
+          region: item.region,
+          address: item.address,
+          price: normalizedPrice,
+          area: item.area,
+          imageUrl: item.imageURL,
+          imageUrls: item.imageUrls,
+          furniture: item.furniture,
+          rating: item.rating,
+          tags: item.tags,
+          availability: item.availability,
+          reviewStatus: item.reviewStatus,
+          isHidden: item.isHidden,
+          contact: item.contact,
+          extraDetail: item.extraDetail,
+          createdAt: item.createdAt,
+        ),
+        ownerId: resolvedOwnerId,
+      );
+    }
+
+    return item;
   }
 }
 
@@ -686,24 +747,60 @@ class RoomDetailFirebaseService {
     final detailSnap = results[0];
     final postSnap = results[1];
     final postData = postSnap.data() ?? room.toJson();
-    final ownerId = (postData['ownerId'] ?? room.ownerId).toString().trim();
+
+    final postOwnerId = postData['ownerId']?.toString().trim() ?? '';
+    final roomOwnerId = room.ownerId.trim();
+    final ownerId = postOwnerId.isNotEmpty
+        ? postOwnerId
+        : (roomOwnerId.isNotEmpty
+            ? roomOwnerId
+            : (InteractionService.instance.ownerOf(room.id) ?? '').trim());
 
     final detailData = Map<String, dynamic>.from(detailSnap.data() ?? {});
 
+    // Lấy thông tin chủ trọ từ InteractionService / contact_profiles trước (vì firestore.rules cho phép đọc contact_profiles)
     if (ownerId.isNotEmpty) {
+      final cachedOwner = InteractionService.instance.userById(ownerId);
+      if (cachedOwner != null) {
+        detailData['landlordName'] ??= cachedOwner.name;
+        if (cachedOwner.phone.trim().isNotEmpty) {
+          detailData['landlordPhone'] ??= cachedOwner.phone;
+        }
+      }
+
       try {
-        final ownerFuture = _db.collection('users').doc(ownerId).get();
+        final contactProfileSnap =
+            await _db.collection('contact_profiles').doc(ownerId).get();
+        final contactProfile = contactProfileSnap.data();
+        if (contactProfile != null) {
+          final profileName = contactProfile['name']?.toString().trim() ?? '';
+          final profilePhone = contactProfile['phone']?.toString().trim() ?? '';
+          if (profileName.isNotEmpty) {
+            detailData['landlordName'] ??= profileName;
+          }
+          if (profilePhone.isNotEmpty) {
+            detailData['landlordPhone'] ??= profilePhone;
+          }
+        }
+      } catch (_) {}
+
+      try {
         final countFuture = _db
             .collection('posts')
             .where('ownerId', isEqualTo: ownerId)
             .where('reviewStatus', isEqualTo: 'approved')
             .where('isHidden', isEqualTo: false)
             .get();
-
-        final ownerSnap = await ownerFuture;
         final ownerPostsSnap = await countFuture;
-        final ownerProfile = ownerSnap.data();
+        detailData['totalRoomsOwned'] = ownerPostsSnap.docs.isNotEmpty
+            ? ownerPostsSnap.docs.length
+            : (detailData['totalRoomsOwned'] ?? 1);
+      } catch (_) {}
 
+      // Fallback đọc từ users/{ownerId} nếu chính chủ trọ đang xem bài của mình
+      try {
+        final ownerSnap = await _db.collection('users').doc(ownerId).get();
+        final ownerProfile = ownerSnap.data();
         if (ownerProfile != null) {
           detailData['landlordName'] ??= ownerProfile['name'] ??
               ownerProfile['fullName'] ??
@@ -712,9 +809,6 @@ class RoomDetailFirebaseService {
           detailData['landlordAvatar'] ??=
               ownerProfile['avatarUrl'] ?? ownerProfile['photoURL'];
         }
-        detailData['totalRoomsOwned'] = ownerPostsSnap.docs.isNotEmpty
-            ? ownerPostsSnap.docs.length
-            : (detailData['totalRoomsOwned'] ?? 1);
       } catch (_) {}
     }
 
