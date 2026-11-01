@@ -3,13 +3,13 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
-import '../contact/models/contact_models.dart';
-import '../contact/services/interaction_service.dart';
-import '../contact/widgets/interaction_ui.dart';
-import '../contact/widgets/rating_stars.dart';
-import '../contact/widgets/review_form.dart';
-import '../contact/widgets/room_actions.dart';
-import 'models/room_item.dart';
+import '../../contact/models/contact_models.dart';
+import '../../contact/services/interaction_service.dart';
+import '../../contact/widgets/interaction_ui.dart';
+import '../../contact/widgets/rating_stars.dart';
+import '../../contact/widgets/review_form.dart';
+import '../../contact/widgets/room_actions.dart';
+import '../../models/room_item.dart';
 
 class RoomDetailScreen extends StatefulWidget {
   final RoomItem room; // Nhận dữ liệu cơ bản để render ngay lập tức
@@ -30,25 +30,37 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
   void initState() {
     super.initState();
     _pageController = PageController();
-    // Đảm bảo phòng hiện tại được đăng ký trong InteractionService để Chat / Đặt lịch hoạt động ngay
-    _syncRoomWithInteractionService(widget.room.ownerId);
+    // initState: không notify trong lúc build, dời đăng ký dự phòng sang sau frame
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _syncRoomWithInteractionService(widget.room.ownerId);
+    });
     // Chỉ ĐỌC thông tin chi tiết & chủ trọ theo ID bài đăng (postId), không tự ghi đè lên Firestore
     _detailFuture = RoomDetailFirebaseService.instance
         .fetchAndSyncRoomDetail(widget.room)
         .then((detail) {
-      _syncRoomWithInteractionService(
-        detail.ownerId.isNotEmpty ? detail.ownerId : widget.room.ownerId,
-      );
+      if (mounted) {
+        _syncRoomWithInteractionService(
+          detail.ownerId.isNotEmpty ? detail.ownerId : widget.room.ownerId,
+        );
+      }
       return detail;
     });
   }
 
-  /// Đồng bộ phòng sang `InteractionService` để module `contact/` biết `ownerId` và hiển thị đúng giá
+  /// Đăng ký dự phòng phòng hiện tại vào `InteractionService` (nếu `ContactFirebase` chưa kịp nạp
+  /// hoặc bài đăng bị bỏ qua). Nếu đã có dữ liệu trong `InteractionService` thì không ghi đè.
   void _syncRoomWithInteractionService(String rawOwnerId) {
     final service = InteractionService.instance;
+    final known = service.ownerOf(widget.room.id);
+    if (known != null &&
+        known.isNotEmpty &&
+        service.rooms[widget.room.id] != null) {
+      return;
+    }
+
     final resolvedOwnerId = rawOwnerId.trim().isNotEmpty
         ? rawOwnerId.trim()
-        : (service.ownerOf(widget.room.id) ?? '');
+        : (known ?? '');
     if (resolvedOwnerId.isEmpty) return;
 
     // Module `contact/` luôn lưu giá theo đơn vị triệu VNĐ (`post.price / 1000000`)

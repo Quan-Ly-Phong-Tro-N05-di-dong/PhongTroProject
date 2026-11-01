@@ -626,7 +626,8 @@ class RoomItem extends BaseEntity<String> {
     );
   }
 
-  /// Khởi tạo `RoomItem` bằng cách ghép dữ liệu từ document `posts` và document `room_detail`
+  /// Khởi tạo `RoomItem` bằng cách ghép dữ liệu từ document `posts` và document `room_detail`.
+  /// Hàm thuần túy (pure factory), không gọi `registerRoom` hay gây side-effect `notifyListeners` trong lúc build.
   factory RoomItem.fromPostAndDetail({
     required DocumentSnapshot<Map<String, dynamic>> postDoc,
     Map<String, dynamic>? detailMap,
@@ -656,7 +657,7 @@ class RoomItem extends BaseEntity<String> {
         detail.isHidden ||
         InteractionService.instance.isRoomHidden(postDoc.id);
 
-    final item = RoomItem(
+    return RoomItem(
       id: postDoc.id,
       ownerId: resolvedOwnerId,
       title: (postData['title'] ?? '').toString(),
@@ -676,35 +677,6 @@ class RoomItem extends BaseEntity<String> {
       extraDetail: detail,
       createdAt: parsedCreatedAt,
     );
-
-    // Đồng bộ sang `InteractionService` (module `contact/` luôn quy ước `price = post.price / 1000000`)
-    if (resolvedOwnerId.isNotEmpty && !isHidden) {
-      InteractionService.instance.registerRoom(
-        RoomItem(
-          id: item.id,
-          ownerId: resolvedOwnerId,
-          title: item.title,
-          region: item.region,
-          address: item.address,
-          price: item.price / 1000000.0,
-          area: item.area,
-          imageUrl: item.imageURL,
-          imageUrls: item.imageUrls,
-          furniture: item.furniture,
-          rating: item.rating,
-          tags: item.tags,
-          availability: item.availability,
-          reviewStatus: item.reviewStatus,
-          isHidden: item.isHidden,
-          contact: item.contact,
-          extraDetail: item.extraDetail,
-          createdAt: item.createdAt,
-        ),
-        ownerId: resolvedOwnerId,
-      );
-    }
-
-    return item;
   }
 }
 
@@ -836,7 +808,6 @@ class RoomDetailFirebaseService {
           raw.startsWith('data:image/')) {
         return raw;
       }
-      // Nếu lưu chuỗi base64 thuần không có tiền tố data:image
       if (raw.length > 64 && !raw.contains(' ')) {
         return '$kPostImagePrefix$raw';
       }
@@ -858,7 +829,6 @@ class RoomDetailFirebaseService {
     final detailSnap = results[0];
     final postSnap = results[1];
 
-    // Nếu bài đăng gốc trong `posts` đã bị xóa nhưng `room_detail` vẫn còn -> dọn dẹp mồ côi
     if (!postSnap.exists && detailSnap.exists) {
       unawaited(cleanupOrphanedRoomDetail(room.id));
     }
@@ -880,7 +850,6 @@ class RoomDetailFirebaseService {
       String? resolvedPhone;
       String? resolvedAvatar;
 
-      // 1. Lấy từ bộ nhớ đệm của InteractionService (`contact_profiles`)
       final cachedOwner = InteractionService.instance.userById(ownerId);
       if (cachedOwner != null) {
         if (!isPlaceholderLandlordName(cachedOwner.name)) {
@@ -891,7 +860,6 @@ class RoomDetailFirebaseService {
         }
       }
 
-      // 2. Đọc từ `contact_profiles/{ownerId}` và `avatars/{ownerId}` song song
       try {
         final profileAndAvatar = await Future.wait([
           _db.collection('contact_profiles').doc(ownerId).get(),
@@ -925,7 +893,6 @@ class RoomDetailFirebaseService {
         }
       } catch (_) {}
 
-      // 3. Đếm số phòng đang được duyệt & công khai của chủ trọ
       try {
         final ownerPostsSnap = await _db
             .collection('posts')
@@ -938,7 +905,6 @@ class RoomDetailFirebaseService {
             : (detailData['totalRoomsOwned'] ?? 1);
       } catch (_) {}
 
-      // 4. Fallback đọc từ `users/{ownerId}` (nếu chủ trọ hoặc admin có quyền đọc)
       if (isPlaceholderLandlordName(resolvedName) ||
           (resolvedAvatar == null || resolvedAvatar.isEmpty)) {
         try {
@@ -968,7 +934,6 @@ class RoomDetailFirebaseService {
         } catch (_) {}
       }
 
-      // Ghi đè lên `detailData` nếu tên trong `detailData` đang trống hoặc là placeholder `'Chủ trọ'`
       if (!isPlaceholderLandlordName(resolvedName) &&
           isPlaceholderLandlordName(detailData['landlordName']?.toString())) {
         detailData['landlordName'] = resolvedName;
