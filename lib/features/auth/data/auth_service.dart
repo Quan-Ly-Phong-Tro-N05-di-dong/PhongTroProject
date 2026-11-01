@@ -38,6 +38,8 @@ class AuthService {
   );
 
   final _currentUser = ValueNotifier<AppUser?>(null);
+  final _authReady = ValueNotifier<bool>(false);
+  final _authReadyCompleter = Completer<void>();
   StreamSubscription<AppUser?>? _profileSubscription;
   bool _googleInitialized = false;
 
@@ -45,31 +47,68 @@ class AuthService {
     _auth.setLanguageCode('vi'); // Email đặt lại mật khẩu bằng tiếng Việt
     // Firebase tự nhớ phiên đăng nhập, mở lại app sẽ tự đăng nhập lại
     _auth.authStateChanges().listen(_onAuthStateChanged);
+    // Mạng chậm cũng không để màn hình chờ mãi
+    Timer(const Duration(seconds: 10), _markAuthReady);
   }
 
   // Người dùng đang đăng nhập (null = chưa đăng nhập). Dùng ValueListenableBuilder để lắng nghe.
   ValueListenable<AppUser?> get currentUser => _currentUser;
+
+  // false = mới mở app, chưa biết người dùng đã đăng nhập hay chưa
+  ValueListenable<bool> get isAuthReady => _authReady;
+
+  // Hoàn thành khi đã biết trạng thái đăng nhập lúc mở app
+  Future<void> get whenAuthReady => _authReadyCompleter.future;
+
+  void _markAuthReady() {
+    if (_authReady.value) return;
+    _authReady.value = true;
+    _authReadyCompleter.complete();
+  }
 
   void _onAuthStateChanged(User? firebaseUser) {
     _profileSubscription?.cancel();
     _profileSubscription = null;
     if (firebaseUser == null) {
       _currentUser.value = null;
+      _markAuthReady();
       return;
     }
     // Theo dõi hồ sơ theo thời gian thực: admin đổi vai trò hoặc khóa tài khoản thì app cập nhật ngay.
     // Khi vừa đăng ký, document có thể chưa được ghi xong; register() sẽ tự cập nhật _currentUser.
     _profileSubscription = _userRepo.watch(firebaseUser.uid).listen(
       (profile) {
-        if (profile == null) return;
+        if (profile == null) {
+          _markAuthReady();
+          return;
+        }
         if (profile.disabled) {
-          logout();
+          logout(); // authStateChanges sẽ báo null và đánh dấu đã sẵn sàng
         } else {
           _currentUser.value = profile;
+          _markAuthReady();
         }
       },
-      onError: (_) {}, // Bỏ qua lỗi quyền truy cập ngay sau khi đăng xuất
+      onError: (_) => _markAuthReady(), // Bỏ qua lỗi quyền truy cập ngay sau khi đăng xuất
     );
+  }
+
+  // Tài khoản Auth vừa tạo nhưng chưa có hồ sơ: xóa đi để người dùng đăng ký lại được bằng email đó
+  Future<void> _rollbackRegistration(User firebaseUser) async {
+    try {
+      await firebaseUser.delete();
+    } catch (e) {
+      debugPrint('Không xóa được tài khoản ${firebaseUser.uid}: $e');
+      await _signOutQuietly();
+    }
+  }
+
+  Future<void> _signOutQuietly() async {
+    try {
+      await logout();
+    } catch (e) {
+      debugPrint('Không đăng xuất được: $e');
+    }
   }
 
   // Ném lỗi nếu tài khoản bị khóa
@@ -160,13 +199,19 @@ class AuthService {
         await logout();
         throw const AuthException('Đã hủy đăng nhập bằng Google');
       }
-      return _saveProfile(AppUser(
-        id: firebaseUser.uid,
-        fullName: firebaseUser.displayName ?? firebaseUser.email ?? 'Người dùng',
-        email: firebaseUser.email ?? '',
-        phone: firebaseUser.phoneNumber,
-        role: role,
-      ));
+      try {
+        return await _saveProfile(AppUser(
+          id: firebaseUser.uid,
+          fullName: firebaseUser.displayName ?? firebaseUser.email ?? 'Người dùng',
+          email: firebaseUser.email ?? '',
+          phone: firebaseUser.phoneNumber,
+          role: role,
+        ));
+      } catch (_) {
+        // Lần đăng nhập sau sẽ hỏi lại vai trò và tạo hồ sơ
+        await _signOutQuietly();
+        rethrow;
+      }
     });
   }
 
@@ -187,15 +232,21 @@ class AuthService {
         password: password,
       );
       final firebaseUser = credential.user!;
-      await firebaseUser.updateDisplayName(fullName.trim());
-      final trimmedPhone = phone?.trim();
-      return _saveProfile(AppUser(
-        id: firebaseUser.uid,
-        fullName: fullName.trim(),
-        email: email.trim().toLowerCase(),
-        phone: (trimmedPhone == null || trimmedPhone.isEmpty) ? null : trimmedPhone,
-        role: role,
-      ));
+      try {
+        await firebaseUser.updateDisplayName(fullName.trim());
+        final trimmedPhone = phone?.trim();
+        // throw FirebaseException(plugin: 'test', code: 'test'); // TEST 
+        return await _saveProfile(AppUser(
+          id: firebaseUser.uid,
+          fullName: fullName.trim(),
+          email: email.trim().toLowerCase(),
+          phone: (trimmedPhone == null || trimmedPhone.isEmpty) ? null : trimmedPhone,
+          role: role,
+        ));
+      } catch (_) {
+        await _rollbackRegistration(firebaseUser);
+        rethrow;
+      }
     });
   }
 

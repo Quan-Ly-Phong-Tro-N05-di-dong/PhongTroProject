@@ -25,7 +25,13 @@ class RoleGuard extends StatelessWidget {
     return ValueListenableBuilder<AppUser?>(
       valueListenable: AuthService.instance.currentUser,
       builder: (context, user, _) {
-        if (user == null) return const _LoginRequired();
+        if (user == null) {
+          return ValueListenableBuilder<bool>(
+            valueListenable: AuthService.instance.isAuthReady,
+            builder: (context, ready, _) =>
+                ready ? const _LoginRequired() : const _AuthLoading(),
+          );
+        }
         if (!user.hasAnyRole(allowed)) return _Forbidden(allowed: allowed);
         return child;
       },
@@ -41,7 +47,10 @@ class RoleGuard extends StatelessWidget {
 //     // ...làm tiếp
 //   }
 Future<bool> requireLogin(BuildContext context) async {
+  // Mới mở app thì chờ biết trạng thái đăng nhập, tránh hỏi đăng nhập nhầm người đã đăng nhập
+  await AuthService.instance.whenAuthReady;
   if (AuthService.instance.currentUser.value != null) return true;
+  if (!context.mounted) return false;
 
   final goLogin = await showDialog<bool>(
     context: context,
@@ -67,6 +76,18 @@ Future<bool> requireLogin(BuildContext context) async {
     MaterialPageRoute(builder: (_) => const LoginScreen()),
   );
   return AuthService.instance.currentUser.value != null;
+}
+
+class _AuthLoading extends StatelessWidget {
+  const _AuthLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      backgroundColor: Color(0xFFF8F9FA),
+      body: Center(child: CircularProgressIndicator()),
+    );
+  }
 }
 
 class _LoginRequired extends StatelessWidget {
