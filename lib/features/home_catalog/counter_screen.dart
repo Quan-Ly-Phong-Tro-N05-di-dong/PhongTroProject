@@ -4,15 +4,17 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import '../contact/models/contact_models.dart';
+import '../contact/services/interaction_service.dart';
 import 'models/room_item.dart';
 import '../auth/widgets/role_guard.dart';
 import 'room_detail_screen.dart';
 
 class FilterModel {
   static const String allOption = 'Tất cả';
-  static const double defaultMinPrice = 500000; // 500.000 VNĐ
+  static const double defaultMinPrice = 0; // 0 VNĐ để không âm thầm ẩn phòng dưới 500.000đ
   static const double defaultMaxPrice = 15000000; // 15.000.000 VNĐ
-  static const double defaultMinArea = 10.0;
+  static const double defaultMinArea = 0.0; // 0 m² để không âm thầm ẩn phòng dưới 10 m²
   static const double defaultMaxArea = 80.0;
 
   final String region;
@@ -40,10 +42,10 @@ class FilterModel {
   // Kiểm tra xem bộ lọc có đang ở trạng thái mặc định không
   bool get isDefault =>
       region == allOption &&
-      minPrice == defaultMinPrice &&
-      maxPrice == defaultMaxPrice &&
-      minArea == defaultMinArea &&
-      maxArea == defaultMaxArea &&
+      minPrice <= defaultMinPrice &&
+      maxPrice >= defaultMaxPrice &&
+      minArea <= defaultMinArea &&
+      maxArea >= defaultMaxArea &&
       furniture == allOption &&
       selectedAmenities.isEmpty &&
       minRating == 0 &&
@@ -94,7 +96,7 @@ class _HomeScreenState extends State<CounterScreen> {
   Timer? _debounce;
   String _searchKeyword = '';
 
-  // Quản lý bộ lọc Modal & Chip nhanh (dùng chuỗi tag thay vì index cố định)
+  // Quản lý bộ lọc Modal & Chip nhanh
   FilterModel _currentFilter = const FilterModel();
   String _selectedQuickFilter = FilterModel.allOption;
 
@@ -102,13 +104,16 @@ class _HomeScreenState extends State<CounterScreen> {
   // 1. `posts` (bài đã duyệt & còn phòng)
   // 2. `room_detail` (chi tiết phòng: amenities, region, furniture, tags...)
   // 3. `search_tags` (các tag phục vụ đề mục "Top tìm kiếm" & bộ lọc nhanh)
+  // 4. `reports` (các bài đăng đã bị Admin xử lý ẩn do vi phạm)
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _postsSub;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _detailsSub;
   StreamSubscription<List<String>>? _tagsSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _reportsSub;
 
   List<QueryDocumentSnapshot<Map<String, dynamic>>> _postDocs = const [];
   Map<String, Map<String, dynamic>> _detailMapByPostId = const {};
   List<String> _firebaseSearchTags = const [];
+  Set<String> _reportedHiddenRoomIds = const {};
 
   bool _isLoading = true;
   String? _errorMessage;
@@ -116,7 +121,13 @@ class _HomeScreenState extends State<CounterScreen> {
   @override
   void initState() {
     super.initState();
+    InteractionService.instance.addListener(_onInteractionChanged);
     _subscribeFirestoreStreams();
+  }
+
+  void _onInteractionChanged() {
+    if (!mounted) return;
+    setState(() {});
   }
 
   void _subscribeFirestoreStreams() {
@@ -128,6 +139,7 @@ class _HomeScreenState extends State<CounterScreen> {
     _postsSub?.cancel();
     _detailsSub?.cancel();
     _tagsSub?.cancel();
+    _reportsSub?.cancel();
 
     // 1. Lắng nghe collection `search_tags` trên Firebase phục vụ Top tìm kiếm & Chip lọc nhanh
     _tagsSub = _detailService.watchSearchTags().listen(
@@ -140,7 +152,7 @@ class _HomeScreenState extends State<CounterScreen> {
       onError: (_) {},
     );
 
-    // 2. Lắng nghe collection `room_detail` để lấy RoomExtraDetail phục vụ bộ lọc
+    // 2. Lắng nghe collection `room_detail` (Chỉ đọc, tuyệt đối không tự ghi đè từ máy người xem)
     _detailsSub = _detailService.roomDetailsRef.snapshots().listen(
       (snapshot) {
         final map = <String, Map<String, dynamic>>{};
@@ -158,7 +170,34 @@ class _HomeScreenState extends State<CounterScreen> {
       onError: (_) {},
     );
 
-    // 3. Lắng nghe các bài đăng đã được phê duyệt (`approved`) và không bị ẩn (`isHidden == false`)
+    // 3. Lắng nghe collection `reports` đã xử lý (`status == 'resolved'`) để ẩn ngay các bài vi phạm
+    _reportsSub = _db
+        .collection('reports')
+        .where('status', isEqualTo: 'resolved')
+        .snapshots()
+        .listen(
+      (snapshot) {
+        final hidden = <String>{};
+        for (final doc in snapshot.docs) {
+          final data = doc.data();
+          final target = data['targetId'];
+          if (data['targetType'] == ReportTarget.room.name &&
+              target is String) {
+            hidden.add(target);
+          }
+        }
+        InteractionService.instance.hiddenRoomIds
+          ..clear()
+          ..addAll(hidden);
+        if (!mounted) return;
+        setState(() {
+          _reportedHiddenRoomIds = hidden;
+        });
+      },
+      onError: (_) {},
+    );
+
+    // 4. Lắng nghe các bài đăng đã được phê duyệt (`approved`) và không bị ẩn (`isHidden == false`)
     _postsSub = _db
         .collection('posts')
         .where('reviewStatus', isEqualTo: 'approved')
@@ -172,8 +211,6 @@ class _HomeScreenState extends State<CounterScreen> {
           _isLoading = false;
           _errorMessage = null;
         });
-        // Tự động đồng bộ ngầm bản ghi `room_detail` cho những bài mới được duyệt mà chưa có `room_detail`
-        _syncMissingRoomDetails(snapshot.docs);
       },
       onError: (Object error) {
         if (!mounted) return;
@@ -185,50 +222,39 @@ class _HomeScreenState extends State<CounterScreen> {
     );
   }
 
-  /// Nếu bài đăng trên `posts` chưa có document tương ứng trong `room_detail`,
-  /// tự động khởi tạo từ dữ liệu bài đăng (tách tiện ích theo dấu phẩy) để liên kết 2 bảng.
-  Future<void> _syncMissingRoomDetails(
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
-  ) async {
-    for (final doc in docs) {
-      if (_detailMapByPostId.containsKey(doc.id)) continue;
-      final postData = doc.data();
-      final detail = RoomExtraDetail.fromMap(
-        const <String, dynamic>{},
-        postId: doc.id,
-        postData: postData,
-      );
-      try {
-        await _detailService.saveRoomExtraDetail(
-          postId: doc.id,
-          detail: detail,
-        );
-      } catch (_) {
-        // Bỏ qua nếu người dùng hiện tại không có quyền ghi trên Firestore
-      }
-    }
-  }
-
   @override
   void dispose() {
+    InteractionService.instance.removeListener(_onInteractionChanged);
     _debounce?.cancel();
     _postsSub?.cancel();
     _detailsSub?.cancel();
     _tagsSub?.cancel();
+    _reportsSub?.cancel();
     _searchController.dispose();
     super.dispose();
   }
 
-  /// Ghép nối dữ liệu từ `posts` và `room_detail` thành danh sách `RoomItem`
-  /// Chỉ hiển thị các phòng có trạng thái `availability == 'available'`
+  /// Ghép nối dữ liệu từ `posts` và `room_detail` thành danh sách `RoomItem`.
+  /// Chỉ hiển thị các phòng có `availability == 'available'` và chưa bị Admin ẩn (`hiddenRoomIds`).
   List<RoomItem> get _approvedAvailableRooms {
     final rooms = <RoomItem>[];
+    final interactionHidden = InteractionService.instance.hiddenRoomIds;
+
     for (final doc in _postDocs) {
+      if (interactionHidden.contains(doc.id) ||
+          _reportedHiddenRoomIds.contains(doc.id)) {
+        continue;
+      }
+
       final data = doc.data();
       final availability = (data['availability'] ?? 'available').toString();
       if (availability != 'available') continue;
 
       final detailMap = _detailMapByPostId[doc.id];
+      if (detailMap != null && detailMap['isHidden'] == true) {
+        continue;
+      }
+
       rooms.add(
         RoomItem.fromPostAndDetail(
           postDoc: doc,
@@ -253,7 +279,6 @@ class _HomeScreenState extends State<CounterScreen> {
     for (final room in _approvedAvailableRooms) {
       tags.addAll(room.tags);
     }
-    // Nếu chưa có tag nào trong `search_tags` hoặc `room.tags`, lấy các key tiện ích đã tách dấu phẩy
     if (tags.isEmpty) {
       for (final room in _approvedAvailableRooms) {
         tags.addAll(room.amenities);
@@ -275,7 +300,6 @@ class _HomeScreenState extends State<CounterScreen> {
       if (room.region.trim().isNotEmpty) {
         regions.add(room.region.trim());
       }
-      // Lấy thêm cấp Tỉnh/Thành phố hoặc Quận/Huyện ở cuối địa chỉ (nếu có)
       final segments = room.addressSegments;
       if (segments.length >= 2) {
         regions.add(segments.last);
@@ -296,9 +320,13 @@ class _HomeScreenState extends State<CounterScreen> {
     return sorted;
   }
 
-  /// Danh sách các tùy chọn tình trạng nội thất (`furniture`) lấy động từ `RoomExtraDetail`
+  /// Danh sách các tùy chọn tình trạng nội thất (`furniture`) luôn có các lựa chọn chuẩn + dữ liệu thực tế
   List<String> get _dynamicFurnitureOptions {
-    final options = <String>{};
+    final options = <String>{
+      'Full nội thất',
+      'Nội thất cơ bản',
+      'Phòng trống',
+    };
     for (final room in _approvedAvailableRooms) {
       if (room.furniture.trim().isNotEmpty) {
         options.add(room.furniture.trim());
@@ -335,20 +363,17 @@ class _HomeScreenState extends State<CounterScreen> {
   }
 
   // 1. Danh sách cho Row đầu tiên: Top tìm kiếm / Đề xuất
-  // Phục vụ các phòng khớp với collection `search_tags` trên Firebase hoặc có rating cao
+  // Chỉ lấy phòng khớp `search_tags` trên Firebase hoặc phòng ĐÃ CÓ ĐÁNH GIÁ thực tế >= 4.0 sao.
+  // Phòng chưa có đánh giá (`reviewCount == 0`) không bị tính nhầm là 5 sao.
   List<RoomItem> get _topRecommendedRooms {
     final rooms = _approvedAvailableRooms;
-    if (_firebaseSearchTags.isNotEmpty) {
-      final matched = rooms
-          .where(
-            (room) =>
-                _firebaseSearchTags.any((tag) => _roomMatchesTag(room, tag)) ||
-                room.rating >= 4.5,
-          )
-          .toList();
-      if (matched.isNotEmpty) return matched;
-    }
-    return rooms.where((room) => room.rating >= 4.5).toList();
+    return rooms.where((room) {
+      final hasHighRealRating =
+          room.reviewCount > 0 && room.effectiveRating >= 4.0;
+      final matchesSearchTag = _firebaseSearchTags.isNotEmpty &&
+          _firebaseSearchTags.any((tag) => _roomMatchesTag(room, tag));
+      return hasHighRealRating || matchesSearchTag;
+    }).toList();
   }
 
   // 2. Danh sách cho phần bên dưới: Lọc dựa trên cả RoomItem lẫn RoomExtraDetail
@@ -387,7 +412,7 @@ class _HomeScreenState extends State<CounterScreen> {
         }
       }
 
-      // Lọc theo Chip chọn nhanh trên màn hình chính (Lấy từ Firebase `search_tags` / `room.tags`)
+      // Lọc theo Chip chọn nhanh trên màn hình chính
       if (_selectedQuickFilter != FilterModel.allOption) {
         if (!_roomMatchesTag(room, _selectedQuickFilter)) {
           return false;
@@ -408,8 +433,9 @@ class _HomeScreenState extends State<CounterScreen> {
         }
       }
 
-      // Lọc theo khoảng giá VNĐ
-      if (room.price < _currentFilter.minPrice) {
+      // Lọc theo khoảng giá VNĐ (chỉ chặn cận dưới khi người dùng kéo minPrice > 0)
+      if (_currentFilter.minPrice > FilterModel.defaultMinPrice &&
+          room.price < _currentFilter.minPrice) {
         return false;
       }
       if (_currentFilter.maxPrice < FilterModel.defaultMaxPrice &&
@@ -417,8 +443,9 @@ class _HomeScreenState extends State<CounterScreen> {
         return false;
       }
 
-      // Lọc theo diện tích
-      if (room.area < _currentFilter.minArea) {
+      // Lọc theo diện tích (chỉ chặn cận dưới khi người dùng kéo minArea > 0)
+      if (_currentFilter.minArea > FilterModel.defaultMinArea &&
+          room.area < _currentFilter.minArea) {
         return false;
       }
       if (_currentFilter.maxArea < FilterModel.defaultMaxArea &&
@@ -426,7 +453,7 @@ class _HomeScreenState extends State<CounterScreen> {
         return false;
       }
 
-      // Lọc theo tình trạng nội thất (nếu được chọn)
+      // Lọc theo tình trạng nội thất
       if (_currentFilter.furniture != FilterModel.allOption &&
           removeVietnameseDiacritics(room.furniture) !=
               removeVietnameseDiacritics(_currentFilter.furniture)) {
@@ -446,9 +473,12 @@ class _HomeScreenState extends State<CounterScreen> {
         }
       }
 
-      // Lọc theo đánh giá tối thiểu
-      if (room.rating < _currentFilter.minRating) {
-        return false;
+      // Lọc theo đánh giá tối thiểu: Phòng chưa có đánh giá (`reviewCount == 0`) sẽ không lọt qua bộ lọc sao
+      if (_currentFilter.minRating > 0) {
+        if (room.reviewCount == 0 ||
+            room.effectiveRating < _currentFilter.minRating) {
+          return false;
+        }
       }
 
       // Lọc theo Tag tìm kiếm phổ biến trong Modal
@@ -637,7 +667,6 @@ class _HomeScreenState extends State<CounterScreen> {
           const SizedBox(width: 10),
           Container(
             decoration: BoxDecoration(
-              // Đổi sang màu cam khi đang có bộ lọc nâng cao được kích hoạt
               color: _currentFilter.isDefault
                   ? Colors.blueAccent
                   : Colors.orangeAccent,
@@ -710,7 +739,7 @@ class _HomeScreenState extends State<CounterScreen> {
   // Component: Hàng ngang cho Top tìm kiếm
   Widget _buildHorizontalTopList(List<RoomItem> rooms) {
     return SizedBox(
-      height: 245,
+      height: 255,
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),
@@ -719,9 +748,9 @@ class _HomeScreenState extends State<CounterScreen> {
         itemBuilder: (context, index) {
           final room = rooms[index];
           return Container(
-            width: 210,
+            width: 215,
             margin: const EdgeInsets.only(right: 12, bottom: 4),
-            child: _buildRoomCard(room, imageHeight: 125),
+            child: _buildRoomCard(room, imageHeight: 120),
           );
         },
       ),
@@ -749,18 +778,19 @@ class _HomeScreenState extends State<CounterScreen> {
       itemCount: rooms.length,
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 260,
-        mainAxisExtent: 250,
+        mainAxisExtent: 260,
         crossAxisSpacing: 12,
         mainAxisSpacing: 12,
       ),
       itemBuilder: (context, index) {
-        return _buildRoomCard(rooms[index], imageHeight: 130);
+        return _buildRoomCard(rooms[index], imageHeight: 125);
       },
     );
   }
 
-  // Component: Card hiển thị từng phòng trọ (Hỗ trợ cả ảnh Base64 và HTTPS, giá VNĐ có dấu chấm)
+  // Component: Card hiển thị từng phòng trọ (Hỗ trợ cả ảnh Base64 và HTTPS, giá VNĐ chính xác, và số sao thực tế)
   Widget _buildRoomCard(RoomItem room, {required double imageHeight}) {
+    final hasReviews = room.reviewCount > 0;
     return Card(
       elevation: 2,
       margin: EdgeInsets.zero,
@@ -848,6 +878,34 @@ class _HomeScreenState extends State<CounterScreen> {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Icon(
+                        hasReviews ? Icons.star_rounded : Icons.star_border_rounded,
+                        size: 14,
+                        color: hasReviews ? Colors.amber.shade700 : Colors.grey,
+                      ),
+                      const SizedBox(width: 3),
+                      Expanded(
+                        child: Text(
+                          hasReviews
+                              ? '${room.effectiveRating.toStringAsFixed(1)} (${room.reviewCount} đánh giá)'
+                              : 'Chưa có đánh giá',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: hasReviews
+                                ? Colors.grey.shade800
+                                : Colors.grey.shade500,
+                            fontWeight:
+                                hasReviews ? FontWeight.w600 : FontWeight.normal,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -857,7 +915,7 @@ class _HomeScreenState extends State<CounterScreen> {
     );
   }
 
-  // Modal bộ lọc chi tiết: Toàn bộ danh sách Khu vực, Tags, Tiện ích, Nội thất được lấy động
+  // Modal bộ lọc chi tiết
   Future<FilterModel?> _openFilterModal(
     BuildContext context,
     FilterModel initialFilter,
@@ -878,8 +936,14 @@ class _HomeScreenState extends State<CounterScreen> {
       ),
     );
     RangeValues areaRange = RangeValues(
-      initialFilter.minArea,
-      initialFilter.maxArea,
+      initialFilter.minArea.clamp(
+        FilterModel.defaultMinArea,
+        FilterModel.defaultMaxArea,
+      ),
+      initialFilter.maxArea.clamp(
+        FilterModel.defaultMinArea,
+        FilterModel.defaultMaxArea,
+      ),
     );
     String selectedArea = availableRegions.contains(initialFilter.region)
         ? initialFilter.region
@@ -1024,7 +1088,7 @@ class _HomeScreenState extends State<CounterScreen> {
                           values: priceRange,
                           min: FilterModel.defaultMinPrice,
                           max: FilterModel.defaultMaxPrice,
-                          divisions: 29,
+                          divisions: 30,
                           labels: RangeLabels(
                             '${formatCurrencyVnd(priceRange.start)} đ',
                             '${formatCurrencyVnd(priceRange.end)} đ',
@@ -1054,7 +1118,7 @@ class _HomeScreenState extends State<CounterScreen> {
                           values: areaRange,
                           min: FilterModel.defaultMinArea,
                           max: FilterModel.defaultMaxArea,
-                          divisions: 14,
+                          divisions: 16,
                           labels: RangeLabels(
                             '${areaRange.start.round()} m²',
                             '${areaRange.end.round()} m²',
@@ -1092,32 +1156,30 @@ class _HomeScreenState extends State<CounterScreen> {
                             }).toList(),
                           ),
                         ],
-                        if (availableFurnitureOptions.length > 1) ...[
-                          const SizedBox(height: 16),
-                          const Text(
-                            'Nội thất',
-                            style: TextStyle(fontWeight: FontWeight.w600),
-                          ),
-                          const SizedBox(height: 8),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: availableFurnitureOptions.map((option) {
-                              final isSelected = furnitureOption == option;
-                              return ChoiceChip(
-                                label: Text(option),
-                                selected: isSelected,
-                                onSelected: (selected) {
-                                  if (selected) {
-                                    setModalState(
-                                      () => furnitureOption = option,
-                                    );
-                                  }
-                                },
-                              );
-                            }).toList(),
-                          ),
-                        ],
+                        const SizedBox(height: 16),
+                        const Text(
+                          'Nội thất',
+                          style: TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: availableFurnitureOptions.map((option) {
+                            final isSelected = furnitureOption == option;
+                            return ChoiceChip(
+                              label: Text(option),
+                              selected: isSelected,
+                              onSelected: (selected) {
+                                if (selected) {
+                                  setModalState(
+                                    () => furnitureOption = option,
+                                  );
+                                }
+                              },
+                            );
+                          }).toList(),
+                        ),
                         const SizedBox(height: 20),
                         const Text(
                           'Đánh giá tối thiểu',

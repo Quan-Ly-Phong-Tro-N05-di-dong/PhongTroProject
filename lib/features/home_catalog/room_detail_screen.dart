@@ -1,4 +1,5 @@
 // lib/features/home_catalog/presentation/screens/room_detail_screen.dart
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
@@ -31,7 +32,7 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
     _pageController = PageController();
     // Đảm bảo phòng hiện tại được đăng ký trong InteractionService để Chat / Đặt lịch hoạt động ngay
     _syncRoomWithInteractionService(widget.room.ownerId);
-    // Kích hoạt truy vấn Firebase lấy thông tin chi tiết & chủ trọ theo ID bài đăng (postId)
+    // Chỉ ĐỌC thông tin chi tiết & chủ trọ theo ID bài đăng (postId), không tự ghi đè lên Firestore
     _detailFuture = RoomDetailFirebaseService.instance
         .fetchAndSyncRoomDetail(widget.room)
         .then((detail) {
@@ -42,7 +43,7 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
     });
   }
 
-  /// Đồng bộ phòng sang `InteractionService` nếu phòng chưa có trong danh sách của module `contact/`
+  /// Đồng bộ phòng sang `InteractionService` để module `contact/` biết `ownerId` và hiển thị đúng giá
   void _syncRoomWithInteractionService(String rawOwnerId) {
     final service = InteractionService.instance;
     final resolvedOwnerId = rawOwnerId.trim().isNotEmpty
@@ -50,36 +51,30 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
         : (service.ownerOf(widget.room.id) ?? '');
     if (resolvedOwnerId.isEmpty) return;
 
-    if (service.ownerOf(widget.room.id) == null ||
-        service.rooms[widget.room.id] == null) {
-      // Module contact/ lưu giá theo đơn vị triệu VNĐ (fmtVnd nhân 1.000.000)
-      final normalizedPrice = widget.room.price >= 100000
-          ? widget.room.price / 1000000
-          : widget.room.price;
-      service.registerRoom(
-        RoomItem(
-          id: widget.room.id,
-          ownerId: resolvedOwnerId,
-          title: widget.room.title,
-          region: widget.room.region,
-          address: widget.room.address,
-          price: normalizedPrice,
-          area: widget.room.area,
-          imageUrl: widget.room.imageURL,
-          imageUrls: widget.room.allImages,
-          furniture: widget.room.furniture,
-          rating: widget.room.rating,
-          tags: widget.room.tags,
-          availability: widget.room.availability,
-          reviewStatus: widget.room.reviewStatus,
-          isHidden: widget.room.isHidden,
-          contact: widget.room.contact,
-          extraDetail: widget.room.extraDetail,
-          createdAt: widget.room.createdAt,
-        ),
+    // Module `contact/` luôn lưu giá theo đơn vị triệu VNĐ (`post.price / 1000000`)
+    service.registerRoom(
+      RoomItem(
+        id: widget.room.id,
         ownerId: resolvedOwnerId,
-      );
-    }
+        title: widget.room.title,
+        region: widget.room.region,
+        address: widget.room.address,
+        price: widget.room.price / 1000000.0,
+        area: widget.room.area,
+        imageUrl: widget.room.imageURL,
+        imageUrls: widget.room.allImages,
+        furniture: widget.room.furniture,
+        rating: widget.room.effectiveRating,
+        tags: widget.room.tags,
+        availability: widget.room.availability,
+        reviewStatus: widget.room.reviewStatus,
+        isHidden: widget.room.isHidden,
+        contact: widget.room.contact,
+        extraDetail: widget.room.extraDetail,
+        createdAt: widget.room.createdAt,
+      ),
+      ownerId: resolvedOwnerId,
+    );
   }
 
   @override
@@ -88,14 +83,25 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
     super.dispose();
   }
 
-  /// Tổng hợp toàn bộ ảnh đã đăng của phòng từ `RoomItem` và `RoomExtraDetail`
+  /// Kiểm tra người dùng hiện tại có quyền nhập/sửa thông tin chi tiết phòng (`RoomExtraDetail`) không
+  bool _canEditRoomDetail(RoomExtraDetail? detail) {
+    final ownerId = (detail?.ownerId.trim().isNotEmpty ?? false)
+        ? detail!.ownerId.trim()
+        : widget.room.ownerId.trim();
+    final firebaseUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final contactUser = InteractionService.instance.currentUser;
+
+    if (InteractionService.instance.role == UserRole.admin) return true;
+    if (ownerId.isEmpty) return false;
+    return firebaseUid == ownerId || contactUser.id == ownerId;
+  }
+
+  /// Lấy danh sách ảnh hiện hành của bài đăng
   List<String> _resolveAllImages(RoomExtraDetail? detail) {
-    final set = <String>{
-      ...widget.room.allImages,
-      if (detail != null)
-        ...detail.imageUrls.map((e) => e.trim()).where((e) => e.isNotEmpty),
-    };
-    return set.toList();
+    if (detail != null && detail.imageUrls.isNotEmpty) {
+      return detail.imageUrls;
+    }
+    return widget.room.allImages;
   }
 
   void _goToImage(int index, int total) {
@@ -120,16 +126,42 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
     );
   }
 
-  /// Đầu chờ mở UI nhập/cập nhật `RoomExtraDetail` của thành viên khác (nếu đã đăng ký qua `RoomExtraDetailIntegration`)
-  Future<void> _openExtraDetailFormIfRegistered(
-    RoomExtraDetail? currentDetail,
-  ) async {
-    final updated = await RoomExtraDetailIntegration.openExtraDetailForm(
-      context,
-      postId: widget.room.id,
-      ownerId: widget.room.ownerId,
-      initialDetail: currentDetail ?? widget.room.extraDetail,
+  /// Mở UI nhập/cập nhật `RoomExtraDetail`:
+  /// - Nếu thành viên khác đã đăng ký form riêng qua `RoomExtraDetailIntegration.registerFormLauncher`, gọi form đó.
+  /// - Nếu chưa đăng ký, mở BottomSheet nhập chi tiết phòng tích hợp sẵn (`_RoomExtraDetailEditorSheet`)
+  ///   để chủ trọ nhập mô tả, giá điện/nước, nội thất, khu vực và tags.
+  Future<void> _openExtraDetailEditor(RoomExtraDetail? currentDetail) async {
+    final initial = currentDetail ?? widget.room.extraDetail;
+    final ownerId = (initial?.ownerId.trim().isNotEmpty ?? false)
+        ? initial!.ownerId.trim()
+        : widget.room.ownerId.trim();
+
+    if (RoomExtraDetailIntegration.isFormRegistered) {
+      final updated = await RoomExtraDetailIntegration.openExtraDetailForm(
+        context,
+        postId: widget.room.id,
+        ownerId: ownerId,
+        initialDetail: initial,
+      );
+      if (updated != null && mounted) {
+        setState(() {
+          _detailFuture = Future.value(updated);
+        });
+      }
+      return;
+    }
+
+    final updated = await showModalBottomSheet<RoomExtraDetail>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => _RoomExtraDetailEditorSheet(
+        room: widget.room,
+        ownerId: ownerId,
+        initialDetail: initial,
+      ),
     );
+
     if (updated != null && mounted) {
       setState(() {
         _detailFuture = Future.value(updated);
@@ -150,6 +182,9 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
         final safeIndex = images.isEmpty
             ? 0
             : _currentImageIndex.clamp(0, images.length - 1);
+        final canEditDetail =
+            _canEditRoomDetail(detail) ||
+            RoomExtraDetailIntegration.isFormRegistered;
 
         return Scaffold(
           backgroundColor: Colors.white,
@@ -161,11 +196,11 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
                 pinned: true,
                 backgroundColor: Colors.blueAccent,
                 actions: [
-                  if (RoomExtraDetailIntegration.isFormRegistered)
+                  if (canEditDetail)
                     IconButton(
                       tooltip: 'Cập nhật chi tiết phòng',
                       icon: const Icon(Icons.edit_note),
-                      onPressed: () => _openExtraDetailFormIfRegistered(detail),
+                      onPressed: () => _openExtraDetailEditor(detail),
                     ),
                 ],
                 flexibleSpace: FlexibleSpaceBar(
@@ -254,8 +289,19 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
                       ),
                       const SizedBox(height: 10),
 
-                      // Hiển thị tóm tắt điểm đánh giá sao từ InteractionService
-                      _buildRatingSummaryRow(room.id),
+                      // Hiển thị tóm tắt điểm đánh giá sao từ InteractionService + nút Sửa chi tiết phòng cho chủ trọ
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(child: _buildRatingSummaryRow(room.id)),
+                          if (canEditDetail)
+                            TextButton.icon(
+                              onPressed: () => _openExtraDetailEditor(detail),
+                              icon: const Icon(Icons.edit_outlined, size: 16),
+                              label: const Text('Bổ sung chi tiết'),
+                            ),
+                        ],
+                      ),
 
                       const Divider(height: 32),
 
@@ -434,8 +480,6 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
   }
 
   /// Khối hiển thị danh sách đánh giá (`ReviewList`) kèm form thêm đánh giá (`ReviewForm`)
-  /// tuân thủ đúng luật nghiệp vụ của `contact/`: chỉ người thuê có lịch hẹn `completed`
-  /// chưa đánh giá tại phòng này mới hiển thị form gửi đánh giá.
   Widget _buildReviewSection(String roomId) {
     final service = InteractionService.instance;
     return ListenableBuilder(
@@ -472,11 +516,8 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Danh sách đánh giá + điểm trung bình từ contact/widgets/review_list.dart
             ReviewList(roomId: roomId),
             const SizedBox(height: 16),
-
-            // Form thêm đánh giá nếu người thuê có lịch hẹn xem phòng đã hoàn thành & chưa đánh giá
             if (selectedAppointment != null)
               Container(
                 padding: const EdgeInsets.all(16),
@@ -579,8 +620,6 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
   }
 
   /// Carousel vuốt ngang trái/phải hiển thị toàn bộ danh sách ảnh của phòng
-  /// Hỗ trợ cả cảm ứng (touch) lẫn kéo chuột trên Web/Desktop, kèm nút điều hướng,
-  /// chấm tròn chỉ báo trang, bộ đếm `1/N` và chạm để phóng to toàn màn hình.
   Widget _buildImageCarousel(List<String> images, int currentIndex) {
     if (images.isEmpty) {
       return const RoomImageView(source: '', fit: BoxFit.cover);
@@ -614,8 +653,6 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
             },
           ),
         ),
-
-        // Nút mũi tên Trái / Phải hỗ trợ thao tác nhanh khi có nhiều hơn 1 ảnh
         if (images.length > 1 && currentIndex > 0)
           Positioned(
             left: 12,
@@ -642,8 +679,6 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
               ),
             ),
           ),
-
-        // Dải chấm tròn (Page Indicator) ở cạnh dưới ảnh
         if (images.length > 1)
           Positioned(
             left: 16,
@@ -671,8 +706,6 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
               }),
             ),
           ),
-
-        // Badge hiển thị số thứ tự ảnh (VD: 1/5) & nút phóng to ở góc dưới phải
         Positioned(
           right: 12,
           bottom: 12,
@@ -805,8 +838,15 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
     );
   }
 
+  /// Thẻ thông tin chủ trọ:
+  /// - Hỗ trợ hiển thị ảnh đại diện từ `avatars/{ownerId}` (cả Base64 lẫn HTTPS) hoặc `InitialsAvatar`
+  /// - Không viết cứng "Đã xác thực SĐT" và không hiển thị dấu `Icons.verified` giả
   Widget _buildLandlordCard(RoomExtraDetail detail) {
     final hasAvatar = detail.landlordAvatar.trim().isNotEmpty;
+    final phoneText = detail.landlordPhone.trim().isNotEmpty
+        ? ' • SĐT: ${detail.landlordPhone.trim()}'
+        : '';
+
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -815,13 +855,21 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
       ),
       child: Row(
         children: [
-          CircleAvatar(
-            radius: 26,
-            backgroundImage:
-                hasAvatar ? NetworkImage(detail.landlordAvatar) : null,
-            onBackgroundImageError: hasAvatar ? (_, __) {} : null,
-            child: !hasAvatar ? const Icon(Icons.person, size: 28) : null,
-          ),
+          if (hasAvatar)
+            ClipOval(
+              child: SizedBox(
+                width: 52,
+                height: 52,
+                child: RoomImageView(
+                  source: detail.landlordAvatar,
+                  width: 52,
+                  height: 52,
+                  fit: BoxFit.cover,
+                ),
+              ),
+            )
+          else
+            InitialsAvatar(name: detail.landlordName, radius: 26),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -836,14 +884,285 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'Đang cho thuê ${detail.totalRoomsOwned} phòng • Đã xác thực SĐT',
+                  'Đang có ${detail.totalRoomsOwned} phòng cho thuê$phoneText',
                   style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
                 ),
               ],
             ),
           ),
-          const Icon(Icons.verified, color: Colors.blueAccent),
         ],
+      ),
+    );
+  }
+}
+
+/// ---------------------------------------------------------------------------
+/// FORM NHẬP / CẬP NHẬT CHI TIẾT PHÒNG (`RoomExtraDetail`) TÍCH HỢP SẴN
+/// Cho phép Chủ trọ hoặc Admin nhập Mô tả, Giá điện/nước, Nội thất, Khu vực, Tags
+/// ---------------------------------------------------------------------------
+class _RoomExtraDetailEditorSheet extends StatefulWidget {
+  final RoomItem room;
+  final String ownerId;
+  final RoomExtraDetail? initialDetail;
+
+  const _RoomExtraDetailEditorSheet({
+    required this.room,
+    required this.ownerId,
+    this.initialDetail,
+  });
+
+  @override
+  State<_RoomExtraDetailEditorSheet> createState() =>
+      _RoomExtraDetailEditorSheetState();
+}
+
+class _RoomExtraDetailEditorSheetState
+    extends State<_RoomExtraDetailEditorSheet> {
+  static const List<String> _furnitureChoices = [
+    'Full nội thất',
+    'Nội thất cơ bản',
+    'Phòng trống',
+  ];
+
+  late final TextEditingController _descCtrl;
+  late final TextEditingController _electricCtrl;
+  late final TextEditingController _waterCtrl;
+  late final TextEditingController _regionCtrl;
+  late final TextEditingController _tagsCtrl;
+  String _selectedFurniture = '';
+  bool _saving = false;
+  String? _errorText;
+
+  @override
+  void initState() {
+    super.initState();
+    final d = widget.initialDetail;
+    _descCtrl = TextEditingController(text: d?.description ?? '');
+    _electricCtrl = TextEditingController(
+      text: (d != null && d.electricPrice > 0)
+          ? d.electricPrice.toString()
+          : '',
+    );
+    _waterCtrl = TextEditingController(
+      text: (d != null && d.waterPrice > 0) ? d.waterPrice.toString() : '',
+    );
+    _regionCtrl = TextEditingController(
+      text: (d != null && d.region.isNotEmpty) ? d.region : widget.room.region,
+    );
+    _tagsCtrl = TextEditingController(text: d?.tagsCommaText ?? '');
+    _selectedFurniture = d?.furniture ?? widget.room.furniture;
+  }
+
+  @override
+  void dispose() {
+    _descCtrl.dispose();
+    _electricCtrl.dispose();
+    _waterCtrl.dispose();
+    _regionCtrl.dispose();
+    _tagsCtrl.dispose();
+    super.dispose();
+  }
+
+  double _parseDouble(String text) =>
+      double.tryParse(text.trim().replaceAll(',', '.')) ?? 0.0;
+
+  Future<void> _save() async {
+    if (_saving) return;
+    setState(() {
+      _saving = true;
+      _errorText = null;
+    });
+
+    try {
+      final input = RoomExtraDetailInput(
+        description: _descCtrl.text.trim(),
+        electricPrice: _parseDouble(_electricCtrl.text),
+        waterPrice: _parseDouble(_waterCtrl.text),
+        region: _regionCtrl.text.trim(),
+        furniture: _selectedFurniture.trim(),
+        tagsText: _tagsCtrl.text.trim(),
+      );
+
+      final updated =
+          await RoomDetailFirebaseService.instance.saveExtraDetailFromInput(
+        postId: widget.room.id,
+        ownerId: widget.ownerId,
+        input: input,
+        existing: widget.initialDetail,
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Đã lưu thông tin chi tiết phòng.')),
+      );
+      Navigator.of(context).pop(updated);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _errorText = 'Không lưu được chi tiết phòng: $e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    return Padding(
+      padding: EdgeInsets.only(bottom: bottomInset),
+      child: Container(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.88,
+        ),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Cập nhật chi tiết phòng',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  IconButton(
+                    onPressed: _saving ? null : () => Navigator.pop(context),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                padding: const EdgeInsets.all(16),
+                children: [
+                  const Text(
+                    'Tình trạng nội thất',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: _furnitureChoices.map((choice) {
+                      final isSelected = _selectedFurniture == choice;
+                      return ChoiceChip(
+                        label: Text(choice),
+                        selected: isSelected,
+                        onSelected: _saving
+                            ? null
+                            : (selected) {
+                                setState(() {
+                                  _selectedFurniture = selected ? choice : '';
+                                });
+                              },
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _electricCtrl,
+                          enabled: !_saving,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          decoration: const InputDecoration(
+                            labelText: 'Giá điện (nghìn/kWh)',
+                            hintText: 'VD: 3.5',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: _waterCtrl,
+                          enabled: !_saving,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          decoration: const InputDecoration(
+                            labelText: 'Giá nước (nghìn/khối)',
+                            hintText: 'VD: 25',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _regionCtrl,
+                    enabled: !_saving,
+                    decoration: const InputDecoration(
+                      labelText: 'Khu vực (Quận/Huyện/Phường)',
+                      hintText: 'VD: Hà Đông',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _tagsCtrl,
+                    enabled: !_saving,
+                    decoration: const InputDecoration(
+                      labelText: 'Nhãn tìm kiếm / Tags (cách nhau dấu phẩy)',
+                      hintText: 'VD: Gần Phenikaa, Có gác xép, Không chung chủ',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _descCtrl,
+                    enabled: !_saving,
+                    maxLines: 4,
+                    decoration: const InputDecoration(
+                      labelText: 'Mô tả chi tiết phòng trọ',
+                      hintText:
+                          'Nhập mô tả chi tiết về phòng, giờ giấc, an ninh, chỗ để xe...',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  if (_errorText != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      _errorText!,
+                      style: const TextStyle(color: Colors.redAccent),
+                    ),
+                  ],
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: FilledButton.icon(
+                      onPressed: _saving ? null : _save,
+                      icon: _saving
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.save_outlined),
+                      label: Text(_saving ? 'Đang lưu...' : 'Lưu chi tiết phòng'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

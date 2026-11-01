@@ -1,7 +1,7 @@
 // lib/features/home_catalog/models/room_item.dart
 import 'dart:async';
 import 'dart:convert';
-// import 'dart:typed_data';
+import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
@@ -15,10 +15,9 @@ import '../../contact/services/interaction_service.dart';
 const String kPostImagePrefix = 'data:image/jpeg;base64,';
 
 /// Định dạng giá tiền VNĐ có dấu chấm ngăn cách hàng nghìn (VD: 3.500.000).
-/// Tự động tương thích cả khi `value` lưu theo đơn vị triệu (VD: 2.8) từ module `contact/`.
+/// Giữ nguyên chính xác giá trị VNĐ từ bài đăng (không tự đoán hay nhân 1.000.000).
 String formatCurrencyVnd(num value) {
-  final normalized = (value > 0 && value < 1000) ? value * 1000000 : value;
-  final digits = normalized.round().toString();
+  final digits = value.round().toString();
   return digits.replaceAllMapped(
     RegExp(r'(\d)(?=(\d{3})+(?!\d))'),
     (match) => '${match[1]}.',
@@ -88,8 +87,18 @@ List<String> extractAddressSegments(String address) {
       .toList();
 }
 
+/// Kiểm tra một chuỗi tên chủ trọ có phải là giá trị mặc định/rỗng hay không
+bool isPlaceholderLandlordName(String? name) {
+  if (name == null) return true;
+  final trimmed = name.trim();
+  return trimmed.isEmpty ||
+      trimmed == 'Chủ trọ' ||
+      trimmed == 'Người dùng' ||
+      trimmed == 'Khách';
+}
+
 /// ---------------------------------------------------------------------------
-/// ĐẦU NỐI (HOOK & INPUT MODEL) DÀNH CHO THÀNH VIÊN LÀM UI/UX NHẬP CHI TIẾT PHÒNG
+/// ĐẦU NỐI (HOOK & INPUT MODEL) DÀNH CHO UI/UX NHẬP CHI TIẾT PHÒNG
 /// ---------------------------------------------------------------------------
 
 class RoomExtraDetailInput {
@@ -199,8 +208,9 @@ class RoomExtraDetail {
   final int totalRoomsOwned;
   final String region;
   final String furniture;
-  final double rating;
+  final double rating; // 0.0 nếu chưa có đánh giá
   final List<String> tags;
+  final bool isHidden;
 
   const RoomExtraDetail({
     required this.postId,
@@ -217,8 +227,9 @@ class RoomExtraDetail {
     required this.totalRoomsOwned,
     this.region = '',
     this.furniture = '',
-    this.rating = 5.0,
+    this.rating = 0.0,
     this.tags = const [],
+    this.isHidden = false,
   });
 
   String get amenitiesCommaText => amenities.join(', ');
@@ -241,6 +252,7 @@ class RoomExtraDetail {
     String? furniture,
     double? rating,
     List<String>? tags,
+    bool? isHidden,
   }) {
     return RoomExtraDetail(
       postId: postId ?? this.postId,
@@ -259,6 +271,7 @@ class RoomExtraDetail {
       furniture: furniture ?? this.furniture,
       rating: rating ?? this.rating,
       tags: tags ?? this.tags,
+      isHidden: isHidden ?? this.isHidden,
     );
   }
 
@@ -269,23 +282,27 @@ class RoomExtraDetail {
     return match?.group(0) ?? (contact.trim().isNotEmpty ? contact.trim() : '');
   }
 
+  /// Chỉ lưu những trường thuộc `room_detail` xuống Firestore.
+  /// Không lưu đè `Chủ trọ` mặc định hay copy cứng `imageUrls`/`amenities` của `posts`
+  /// để tránh làm sống lại ảnh/tiện ích đã xóa bên `posts`.
   Map<String, dynamic> toMap() => {
         'postId': postId,
         'ownerId': ownerId,
         'description': description,
         'electricPrice': electricPrice,
         'waterPrice': waterPrice,
-        'amenities': amenities,
-        'imageUrls': imageUrls,
-        'landlordName': landlordName,
-        'landlordPhone': landlordPhone,
-        'landlordZalo': landlordZalo,
-        'landlordAvatar': landlordAvatar,
+        if (!isPlaceholderLandlordName(landlordName))
+          'landlordName': landlordName.trim(),
+        if (landlordPhone.trim().isNotEmpty)
+          'landlordPhone': landlordPhone.trim(),
+        if (landlordZalo.trim().isNotEmpty) 'landlordZalo': landlordZalo.trim(),
+        if (landlordAvatar.trim().isNotEmpty)
+          'landlordAvatar': landlordAvatar.trim(),
         'totalRoomsOwned': totalRoomsOwned,
         'region': region,
         'furniture': furniture,
-        'rating': rating,
         'tags': tags,
+        'isHidden': isHidden,
         'updatedAt': FieldValue.serverTimestamp(),
       };
 
@@ -296,43 +313,65 @@ class RoomExtraDetail {
   }) {
     final address = postData?['address']?.toString().trim() ?? '';
     final contact = postData?['contact']?.toString().trim() ?? '';
+    final ownerId =
+        (postData?['ownerId'] ?? data['ownerId'] ?? '').toString().trim();
 
-    final detailAmenities = parseCommaSeparatedKeys(data['amenities']);
-    final postAmenities = parseCommaSeparatedKeys(postData?['amenities']);
-    final mergedAmenities = <String>{
-      ...detailAmenities,
-      ...postAmenities,
-    }.toList();
+    // 1. Tiện ích (`amenities`) và Ảnh (`imageUrls`):
+    // `posts` là nguồn dữ liệu gốc (Single Source of Truth).
+    // Nếu có `postData`, chỉ lấy từ `postData` để khi chủ trọ xóa ảnh/tiện ích bên `posts`,
+    // dữ liệu cũ trong `room_detail` không bao giờ làm sống lại ảnh/tiện ích đã xóa.
+    final List<String> resolvedAmenities;
+    if (postData != null && postData.containsKey('amenities')) {
+      resolvedAmenities = parseCommaSeparatedKeys(postData['amenities']);
+    } else {
+      resolvedAmenities = parseCommaSeparatedKeys(data['amenities']);
+    }
 
-    final detailImages = data['imageUrls'] is List
-        ? (data['imageUrls'] as List)
-            .whereType<String>()
-            .map((s) => s.trim())
-            .where((s) => s.isNotEmpty)
-            .toList()
-        : <String>[];
-    final postImages = postData?['imageUrls'] is List
-        ? (postData!['imageUrls'] as List)
-            .whereType<String>()
-            .map((s) => s.trim())
-            .where((s) => s.isNotEmpty)
-            .toList()
-        : <String>[];
-    final mergedImages = <String>{
-      ...postImages,
-      ...detailImages,
-    }.toList();
+    final List<String> resolvedImages;
+    if (postData != null && postData['imageUrls'] is List) {
+      resolvedImages = (postData['imageUrls'] as List)
+          .whereType<String>()
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty)
+          .toList();
+    } else if (data['imageUrls'] is List) {
+      resolvedImages = (data['imageUrls'] as List)
+          .whereType<String>()
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty)
+          .toList();
+    } else {
+      resolvedImages = const <String>[];
+    }
 
-    final desc = (data['description']?.toString().trim().isNotEmpty ?? false)
-        ? data['description'].toString().trim()
-        : (postData?['amenities']?.toString().trim().isNotEmpty ?? false)
-            ? postData!['amenities'].toString().trim()
-            : '';
+    // 2. Mô tả chi tiết (`description`):
+    // Chỉ lấy từ `room_detail.description`, tuyệt đối không lấy bản sao của `amenities`.
+    final desc = data['description']?.toString().trim() ?? '';
+
+    // 3. Thông tin liên hệ & Tên chủ trọ:
+    // Ưu tiên lấy tên thật từ `InteractionService.users` (`contact_profiles`) nếu có.
+    final cachedOwner = ownerId.isNotEmpty
+        ? InteractionService.instance.userById(ownerId)
+        : null;
+    final rawDetailName = data['landlordName']?.toString().trim();
+    final String resolvedLandlordName;
+    if (!isPlaceholderLandlordName(rawDetailName)) {
+      resolvedLandlordName = rawDetailName!;
+    } else if (cachedOwner != null &&
+        !isPlaceholderLandlordName(cachedOwner.name)) {
+      resolvedLandlordName = cachedOwner.name.trim();
+    } else {
+      resolvedLandlordName = 'Chủ trọ';
+    }
 
     final extractedPhone = extractPhone(contact);
-    final phone = (data['landlordPhone']?.toString().trim().isNotEmpty ?? false)
-        ? data['landlordPhone'].toString().trim()
-        : (extractedPhone.isNotEmpty ? extractedPhone : contact);
+    final rawDetailPhone = data['landlordPhone']?.toString().trim() ?? '';
+    final cachedPhone = cachedOwner?.phone.trim() ?? '';
+    final phone = rawDetailPhone.isNotEmpty
+        ? rawDetailPhone
+        : (extractedPhone.isNotEmpty
+            ? extractedPhone
+            : (cachedPhone.isNotEmpty ? cachedPhone : contact));
     final zalo = (data['landlordZalo']?.toString().trim().isNotEmpty ?? false)
         ? data['landlordZalo'].toString().trim()
         : phone;
@@ -345,35 +384,30 @@ class RoomExtraDetail {
     final rawFurniture = data['furniture']?.toString().trim() ?? '';
     final parsedTags = parseCommaSeparatedKeys(data['tags']);
 
+    // 4. Điểm đánh giá sao (`rating`):
+    // Chỉ lấy điểm từ các đánh giá thực tế (`summary.count > 0`).
+    // Phòng chưa có đánh giá phải có `rating = 0.0` (không gán 5.0 giả).
     final summary = InteractionService.instance.ratingSummary(postId);
-    final resolvedRating = summary.count > 0
-        ? summary.average
-        : ((data['rating'] as num?)?.toDouble() ?? 5.0);
+    final resolvedRating = summary.count > 0 ? summary.average : 0.0;
 
     return RoomExtraDetail(
       postId: postId,
-      ownerId:
-          data['ownerId']?.toString() ?? postData?['ownerId']?.toString() ?? '',
+      ownerId: ownerId,
       description: desc,
       electricPrice: (data['electricPrice'] as num?)?.toDouble() ?? 0.0,
       waterPrice: (data['waterPrice'] as num?)?.toDouble() ?? 0.0,
-      amenities: mergedAmenities,
-      imageUrls: mergedImages,
-      landlordName:
-          (data['landlordName']?.toString().trim().isNotEmpty ?? false)
-              ? data['landlordName'].toString().trim()
-              : 'Chủ trọ',
+      amenities: resolvedAmenities,
+      imageUrls: resolvedImages,
+      landlordName: resolvedLandlordName,
       landlordPhone: phone,
       landlordZalo: zalo,
-      landlordAvatar:
-          (data['landlordAvatar']?.toString().trim().isNotEmpty ?? false)
-              ? data['landlordAvatar'].toString().trim()
-              : '',
+      landlordAvatar: data['landlordAvatar']?.toString().trim() ?? '',
       totalRoomsOwned: (data['totalRoomsOwned'] as num?)?.toInt() ?? 1,
       region: region,
       furniture: rawFurniture,
       rating: resolvedRating,
       tags: parsedTags,
+      isHidden: data['isHidden'] == true,
     );
   }
 
@@ -383,20 +417,22 @@ class RoomExtraDetail {
     required RoomExtraDetailInput input,
     RoomExtraDetail? existing,
   }) {
+    final summary = InteractionService.instance.ratingSummary(postId);
     return RoomExtraDetail(
       postId: postId,
       ownerId: ownerId.isNotEmpty ? ownerId : (existing?.ownerId ?? ''),
       description: input.description.trim(),
       electricPrice: input.electricPrice,
       waterPrice: input.waterPrice,
-      amenities: input.resolvedAmenities.isNotEmpty
+      amenities: input.amenitiesList != null || input.amenitiesText != null
           ? input.resolvedAmenities
           : (existing?.amenities ?? const []),
-      imageUrls: input.imageUrls != null && input.imageUrls!.isNotEmpty
+      imageUrls: input.imageUrls != null
           ? input.imageUrls!
           : (existing?.imageUrls ?? const []),
-      landlordName:
-          input.landlordName?.trim() ?? existing?.landlordName ?? 'Chủ trọ',
+      landlordName: !isPlaceholderLandlordName(input.landlordName)
+          ? input.landlordName!.trim()
+          : (existing?.landlordName ?? 'Chủ trọ'),
       landlordPhone:
           input.landlordPhone?.trim() ?? existing?.landlordPhone ?? '',
       landlordZalo: input.landlordZalo?.trim() ??
@@ -409,10 +445,11 @@ class RoomExtraDetail {
           input.totalRoomsOwned ?? existing?.totalRoomsOwned ?? 1,
       region: input.region?.trim() ?? existing?.region ?? '',
       furniture: input.furniture?.trim() ?? existing?.furniture ?? '',
-      rating: input.rating ?? existing?.rating ?? 5.0,
-      tags: input.resolvedTags.isNotEmpty
+      rating: summary.count > 0 ? summary.average : 0.0,
+      tags: input.tagsList != null || input.tagsText != null
           ? input.resolvedTags
           : (existing?.tags ?? const []),
+      isHidden: existing?.isHidden ?? false,
     );
   }
 }
@@ -426,12 +463,12 @@ class RoomItem extends BaseEntity<String> {
   final String title;
   final String region;
   final String address;
-  final double price; // Đơn vị: VNĐ / tháng (hoặc triệu VNĐ nếu từ contact/)
+  final double price; // Đơn vị: VNĐ / tháng
   final double area; // m²
   final String imageUrl;
   final List<String> imageUrls;
   final String furniture;
-  final double rating;
+  final double rating; // 0.0 nếu chưa có đánh giá
   final List<String> tags;
   final String availability; // 'available' | 'rented'
   final String reviewStatus; // 'pending' | 'approved' | 'rejected'
@@ -450,7 +487,7 @@ class RoomItem extends BaseEntity<String> {
     required this.imageUrl,
     this.imageUrls = const [],
     this.furniture = '',
-    this.rating = 5.0,
+    this.rating = 0.0,
     this.tags = const [],
     this.availability = 'available',
     this.reviewStatus = 'approved',
@@ -464,13 +501,13 @@ class RoomItem extends BaseEntity<String> {
   RatingSummary get ratingSummary =>
       InteractionService.instance.ratingSummary(id);
 
-  /// Điểm sao ưu tiên lấy từ đánh giá thực tế của người thuê; nếu chưa có đánh giá thì dùng `rating`
+  /// Điểm sao thực tế: chỉ trả về số sao > 0 khi phòng đã có ít nhất 1 đánh giá (`count > 0`).
   double get effectiveRating {
     final summary = ratingSummary;
-    return summary.count > 0 ? summary.average : rating;
+    return summary.count > 0 ? summary.average : 0.0;
   }
 
-  /// Số lượt đánh giá của phòng từ module `contact/`
+  /// Số lượt đánh giá thực tế của phòng
   int get reviewCount => ratingSummary.count;
 
   /// Giữ getter `imageURL` (ảnh bìa) tương thích với thẻ phòng ở trang chủ
@@ -478,20 +515,18 @@ class RoomItem extends BaseEntity<String> {
       ? imageUrl
       : (imageUrls.isNotEmpty ? imageUrls.first : '');
 
-  /// Trả về toàn bộ danh sách ảnh của phòng (kết hợp từ `imageUrls`, `extraDetail.imageUrls`, và `imageUrl`)
+  /// Trả về toàn bộ danh sách ảnh hiện hành của phòng (lấy theo bài đăng `posts`)
   List<String> get allImages {
-    final set = <String>{
-      ...imageUrls.map((e) => e.trim()).where((e) => e.isNotEmpty),
-      if (extraDetail != null)
-        ...extraDetail!.imageUrls
-            .map((e) => e.trim())
-            .where((e) => e.isNotEmpty),
-      if (imageUrl.trim().isNotEmpty) imageUrl.trim(),
-    };
-    return set.toList();
+    if (imageUrls.isNotEmpty) {
+      return imageUrls.map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+    }
+    if (imageUrl.trim().isNotEmpty) {
+      return [imageUrl.trim()];
+    }
+    return const [];
   }
 
-  /// Danh sách tiện ích (đã tách bằng dấu phẩy và trim) từ `RoomExtraDetail`
+  /// Danh sách tiện ích (đã tách bằng dấu phẩy và trim)
   List<String> get amenities => extraDetail?.amenities ?? const [];
 
   /// Tất cả các phân đoạn địa chỉ (tách theo dấu phẩy) phục vụ lọc khu vực đa cấp
@@ -581,9 +616,7 @@ class RoomItem extends BaseEntity<String> {
           : (urls.isNotEmpty ? urls.first : ''),
       imageUrls: urls,
       furniture: (json['furniture'] ?? '').toString(),
-      rating: summary.count > 0
-          ? summary.average
-          : ((json['rating'] as num?)?.toDouble() ?? 5.0),
+      rating: summary.count > 0 ? summary.average : 0.0,
       tags: parseCommaSeparatedKeys(json['tags']),
       availability: (json['availability'] ?? 'available').toString(),
       reviewStatus: (json['reviewStatus'] ?? 'approved').toString(),
@@ -619,6 +652,10 @@ class RoomItem extends BaseEntity<String> {
     }
 
     final resolvedOwnerId = (postData['ownerId'] ?? detail.ownerId).toString();
+    final isHidden = postData['isHidden'] == true ||
+        detail.isHidden ||
+        InteractionService.instance.isRoomHidden(postDoc.id);
+
     final item = RoomItem(
       id: postDoc.id,
       ownerId: resolvedOwnerId,
@@ -634,17 +671,14 @@ class RoomItem extends BaseEntity<String> {
       tags: detail.tags,
       availability: (postData['availability'] ?? 'available').toString(),
       reviewStatus: (postData['reviewStatus'] ?? 'approved').toString(),
-      isHidden: postData['isHidden'] == true,
+      isHidden: isHidden,
       contact: (postData['contact'] ?? '').toString(),
       extraDetail: detail,
       createdAt: parsedCreatedAt,
     );
 
-    // Đồng bộ phòng vào InteractionService nếu chưa có để hỗ trợ Chat / Đặt lịch
-    if (resolvedOwnerId.isNotEmpty &&
-        InteractionService.instance.ownerOf(item.id) == null) {
-      final normalizedPrice =
-          item.price >= 100000 ? item.price / 1000000 : item.price;
+    // Đồng bộ sang `InteractionService` (module `contact/` luôn quy ước `price = post.price / 1000000`)
+    if (resolvedOwnerId.isNotEmpty && !isHidden) {
       InteractionService.instance.registerRoom(
         RoomItem(
           id: item.id,
@@ -652,7 +686,7 @@ class RoomItem extends BaseEntity<String> {
           title: item.title,
           region: item.region,
           address: item.address,
-          price: normalizedPrice,
+          price: item.price / 1000000.0,
           area: item.area,
           imageUrl: item.imageURL,
           imageUrls: item.imageUrls,
@@ -679,7 +713,10 @@ class RoomItem extends BaseEntity<String> {
 /// ---------------------------------------------------------------------------
 
 class RoomDetailFirebaseService {
-  RoomDetailFirebaseService._();
+  RoomDetailFirebaseService._() {
+    _bindInteractionHooks();
+  }
+
   static final RoomDetailFirebaseService instance =
       RoomDetailFirebaseService._();
 
@@ -691,6 +728,41 @@ class RoomDetailFirebaseService {
   CollectionReference<Map<String, dynamic>> get searchTagsRef =>
       _db.collection('search_tags');
 
+  /// Gắn hook `onHideRoom` vào `InteractionService` để khi Admin xử lý báo cáo
+  /// "Ẩn bài", trạng thái ẩn được lưu xuống `room_detail/{roomId}` (và `posts/{roomId}` nếu có quyền).
+  void _bindInteractionHooks() {
+    final s = InteractionService.instance;
+    final previousHideHook = s.onHideRoom;
+    s.onHideRoom = (String roomId) {
+      previousHideHook?.call(roomId);
+      unawaited(hideRoomByAdmin(roomId));
+    };
+  }
+
+  /// Ẩn bài đăng khi Admin xác nhận báo cáo vi phạm
+  Future<void> hideRoomByAdmin(String roomId) async {
+    InteractionService.instance.hiddenRoomIds.add(roomId);
+    InteractionService.instance.refresh();
+    try {
+      await roomDetailsRef.doc(roomId).set(
+        {
+          'postId': roomId,
+          'isHidden': true,
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+    } catch (_) {}
+    try {
+      await _db.collection('posts').doc(roomId).update({
+        'isHidden': true,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    } catch (_) {}
+  }
+
+  /// Chỉ được gọi khi Chủ trọ hoặc Admin chủ động bấm Lưu trên form chi tiết phòng.
+  /// Không bao giờ tự động gọi khi người dùng chỉ đang xem trang chủ hay trang chi tiết.
   Future<void> saveRoomExtraDetail({
     required String postId,
     required RoomExtraDetail detail,
@@ -717,6 +789,13 @@ class RoomDetailFirebaseService {
     return detail;
   }
 
+  /// Dọn dẹp dữ liệu mồ côi trong `room_detail` khi phát hiện bài đăng gốc trong `posts` đã bị xóa
+  Future<void> cleanupOrphanedRoomDetail(String postId) async {
+    try {
+      await roomDetailsRef.doc(postId).delete();
+    } catch (_) {}
+  }
+
   Stream<List<String>> watchSearchTags() {
     return searchTagsRef.snapshots().map((snapshot) {
       final result = <String>{};
@@ -736,6 +815,38 @@ class RoomDetailFirebaseService {
     });
   }
 
+  /// Trích xuất chuỗi ảnh đại diện từ document trong collection `avatars/{uid}`
+  static String _extractAvatarSource(Map<String, dynamic>? data) {
+    if (data == null) return '';
+    for (final key in const [
+      'dataUrl',
+      'avatar',
+      'avatarUrl',
+      'imageUrl',
+      'url',
+      'photoURL',
+      'photoUrl',
+      'base64',
+      'data',
+    ]) {
+      final raw = data[key]?.toString().trim() ?? '';
+      if (raw.isEmpty) continue;
+      if (raw.startsWith('http://') ||
+          raw.startsWith('https://') ||
+          raw.startsWith('data:image/')) {
+        return raw;
+      }
+      // Nếu lưu chuỗi base64 thuần không có tiền tố data:image
+      if (raw.length > 64 && !raw.contains(' ')) {
+        return '$kPostImagePrefix$raw';
+      }
+    }
+    return '';
+  }
+
+  /// Chỉ ĐỌC (Read-only) chi tiết phòng từ `room_detail/{roomId}`, `posts/{roomId}`,
+  /// `contact_profiles/{ownerId}`, `avatars/{ownerId}` và `users/{ownerId}`.
+  /// Tuyệt đối KHÔNG tự động ghi xuống `room_detail` khi người dùng chỉ xem phòng.
   Future<RoomExtraDetail> fetchAndSyncRoomDetail(RoomItem room) async {
     final detailDocRef = roomDetailsRef.doc(room.id);
 
@@ -746,6 +857,12 @@ class RoomDetailFirebaseService {
 
     final detailSnap = results[0];
     final postSnap = results[1];
+
+    // Nếu bài đăng gốc trong `posts` đã bị xóa nhưng `room_detail` vẫn còn -> dọn dẹp mồ côi
+    if (!postSnap.exists && detailSnap.exists) {
+      unawaited(cleanupOrphanedRoomDetail(room.id));
+    }
+
     final postData = postSnap.data() ?? room.toJson();
 
     final postOwnerId = postData['ownerId']?.toString().trim() ?? '';
@@ -758,78 +875,126 @@ class RoomDetailFirebaseService {
 
     final detailData = Map<String, dynamic>.from(detailSnap.data() ?? {});
 
-    // Lấy thông tin chủ trọ từ InteractionService / contact_profiles trước (vì firestore.rules cho phép đọc contact_profiles)
     if (ownerId.isNotEmpty) {
+      String? resolvedName;
+      String? resolvedPhone;
+      String? resolvedAvatar;
+
+      // 1. Lấy từ bộ nhớ đệm của InteractionService (`contact_profiles`)
       final cachedOwner = InteractionService.instance.userById(ownerId);
       if (cachedOwner != null) {
-        detailData['landlordName'] ??= cachedOwner.name;
+        if (!isPlaceholderLandlordName(cachedOwner.name)) {
+          resolvedName = cachedOwner.name.trim();
+        }
         if (cachedOwner.phone.trim().isNotEmpty) {
-          detailData['landlordPhone'] ??= cachedOwner.phone;
+          resolvedPhone = cachedOwner.phone.trim();
         }
       }
 
+      // 2. Đọc từ `contact_profiles/{ownerId}` và `avatars/{ownerId}` song song
       try {
-        final contactProfileSnap =
-            await _db.collection('contact_profiles').doc(ownerId).get();
-        final contactProfile = contactProfileSnap.data();
+        final profileAndAvatar = await Future.wait([
+          _db.collection('contact_profiles').doc(ownerId).get(),
+          _db.collection('avatars').doc(ownerId).get(),
+        ]);
+
+        final contactProfile = profileAndAvatar[0].data();
         if (contactProfile != null) {
-          final profileName = contactProfile['name']?.toString().trim() ?? '';
-          final profilePhone = contactProfile['phone']?.toString().trim() ?? '';
-          if (profileName.isNotEmpty) {
-            detailData['landlordName'] ??= profileName;
+          final pName = (contactProfile['name'] ??
+                  contactProfile['fullName'] ??
+                  contactProfile['displayName'])
+              ?.toString()
+              .trim();
+          if (!isPlaceholderLandlordName(pName)) {
+            resolvedName = pName;
           }
-          if (profilePhone.isNotEmpty) {
-            detailData['landlordPhone'] ??= profilePhone;
+          final pPhone = contactProfile['phone']?.toString().trim() ?? '';
+          if (pPhone.isNotEmpty) {
+            resolvedPhone = pPhone;
           }
+          final pAvatar = _extractAvatarSource(contactProfile);
+          if (pAvatar.isNotEmpty) {
+            resolvedAvatar = pAvatar;
+          }
+        }
+
+        final avatarDoc = profileAndAvatar[1].data();
+        final avatarFromCollection = _extractAvatarSource(avatarDoc);
+        if (avatarFromCollection.isNotEmpty) {
+          resolvedAvatar = avatarFromCollection;
         }
       } catch (_) {}
 
+      // 3. Đếm số phòng đang được duyệt & công khai của chủ trọ
       try {
-        final countFuture = _db
+        final ownerPostsSnap = await _db
             .collection('posts')
             .where('ownerId', isEqualTo: ownerId)
             .where('reviewStatus', isEqualTo: 'approved')
             .where('isHidden', isEqualTo: false)
             .get();
-        final ownerPostsSnap = await countFuture;
         detailData['totalRoomsOwned'] = ownerPostsSnap.docs.isNotEmpty
             ? ownerPostsSnap.docs.length
             : (detailData['totalRoomsOwned'] ?? 1);
       } catch (_) {}
 
-      // Fallback đọc từ users/{ownerId} nếu chính chủ trọ đang xem bài của mình
-      try {
-        final ownerSnap = await _db.collection('users').doc(ownerId).get();
-        final ownerProfile = ownerSnap.data();
-        if (ownerProfile != null) {
-          detailData['landlordName'] ??= ownerProfile['name'] ??
-              ownerProfile['fullName'] ??
-              ownerProfile['displayName'];
-          detailData['landlordPhone'] ??= ownerProfile['phone'];
-          detailData['landlordAvatar'] ??=
-              ownerProfile['avatarUrl'] ?? ownerProfile['photoURL'];
-        }
-      } catch (_) {}
+      // 4. Fallback đọc từ `users/{ownerId}` (nếu chủ trọ hoặc admin có quyền đọc)
+      if (isPlaceholderLandlordName(resolvedName) ||
+          (resolvedAvatar == null || resolvedAvatar.isEmpty)) {
+        try {
+          final ownerSnap = await _db.collection('users').doc(ownerId).get();
+          final ownerProfile = ownerSnap.data();
+          if (ownerProfile != null) {
+            final uName = (ownerProfile['fullName'] ??
+                    ownerProfile['name'] ??
+                    ownerProfile['displayName'])
+                ?.toString()
+                .trim();
+            if (isPlaceholderLandlordName(resolvedName) &&
+                !isPlaceholderLandlordName(uName)) {
+              resolvedName = uName;
+            }
+            final uPhone = ownerProfile['phone']?.toString().trim() ?? '';
+            if ((resolvedPhone == null || resolvedPhone.isEmpty) &&
+                uPhone.isNotEmpty) {
+              resolvedPhone = uPhone;
+            }
+            final uAvatar = _extractAvatarSource(ownerProfile);
+            if ((resolvedAvatar == null || resolvedAvatar.isEmpty) &&
+                uAvatar.isNotEmpty) {
+              resolvedAvatar = uAvatar;
+            }
+          }
+        } catch (_) {}
+      }
+
+      // Ghi đè lên `detailData` nếu tên trong `detailData` đang trống hoặc là placeholder `'Chủ trọ'`
+      if (!isPlaceholderLandlordName(resolvedName) &&
+          isPlaceholderLandlordName(detailData['landlordName']?.toString())) {
+        detailData['landlordName'] = resolvedName;
+      }
+      if (resolvedPhone != null &&
+          resolvedPhone.isNotEmpty &&
+          (detailData['landlordPhone']?.toString().trim().isEmpty ?? true)) {
+        detailData['landlordPhone'] = resolvedPhone;
+      }
+      if (resolvedAvatar != null &&
+          resolvedAvatar.isNotEmpty &&
+          (detailData['landlordAvatar']?.toString().trim().isEmpty ?? true)) {
+        detailData['landlordAvatar'] = resolvedAvatar;
+      }
     }
 
-    final parsedDetail = RoomExtraDetail.fromMap(
+    return RoomExtraDetail.fromMap(
       detailData,
       postId: room.id,
       postData: postData,
     );
-
-    if (!detailSnap.exists) {
-      try {
-        await detailDocRef.set(parsedDetail.toMap(), SetOptions(merge: true));
-      } catch (_) {}
-    }
-
-    return parsedDetail;
   }
 }
 
-/// Widget hiển thị ảnh phòng trọ hỗ trợ cả ảnh Base64 (`data:image/jpeg;base64,...`)
-/// từ module `post_*` lẫn đường dẫn ảnh mạng HTTPS.
+/// Widget hiển thị ảnh hỗ trợ cả ảnh Base64 (`data:image/...;base64,...`)
+/// lẫn đường dẫn ảnh mạng HTTPS.
 class RoomImageView extends StatelessWidget {
   final String source;
   final double? height;
@@ -859,21 +1024,24 @@ class RoomImageView extends StatelessWidget {
     final trimmed = source.trim();
     if (trimmed.isEmpty) return _errorBox();
 
-    if (trimmed.startsWith(kPostImagePrefix)) {
-      try {
-        final Uint8List bytes = base64Decode(
-          trimmed.substring(kPostImagePrefix.length),
-        );
-        return Image.memory(
-          bytes,
-          height: height,
-          width: width ?? double.infinity,
-          fit: fit,
-          gaplessPlayback: true,
-          errorBuilder: (_, __, ___) => _errorBox(),
-        );
-      } catch (_) {
-        return _errorBox();
+    if (trimmed.startsWith('data:image/')) {
+      final commaIndex = trimmed.indexOf(',');
+      if (commaIndex != -1 && commaIndex + 1 < trimmed.length) {
+        try {
+          final Uint8List bytes = base64Decode(
+            trimmed.substring(commaIndex + 1),
+          );
+          return Image.memory(
+            bytes,
+            height: height,
+            width: width ?? double.infinity,
+            fit: fit,
+            gaplessPlayback: true,
+            errorBuilder: (_, __, ___) => _errorBox(),
+          );
+        } catch (_) {
+          return _errorBox();
+        }
       }
     }
 
