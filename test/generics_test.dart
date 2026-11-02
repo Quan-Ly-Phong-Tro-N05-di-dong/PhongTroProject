@@ -72,9 +72,12 @@ void main() {
 
   group('EntityRegistry (Type)', () {
     test('toJson -> fromJson<T> cho cả 5 model', () {
+       // RoomItem.fromJson tự suy khu vực từ địa chỉ và lấy điểm sao từ
+      // InteractionService, nên dùng phòng chưa có đánh giá và ghi sẵn khu vực.
       const room = RoomItem(
-        id: '1',
+        id: '99',
         title: 'Phòng A',
+        region: 'Hà Đông',
         address: 'Hà Đông',
         price: 2.5,
         area: 20,
