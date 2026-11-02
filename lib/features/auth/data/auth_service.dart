@@ -258,6 +258,26 @@ class AuthService {
     return _guard(() => _auth.sendPasswordResetEmail(email: email.trim()));
   }
 
+  // false = tài khoản chỉ đăng nhập bằng Google, không có mật khẩu để đổi
+  bool get hasPassword {
+    final providers = _auth.currentUser?.providerData ?? const <UserInfo>[];
+    return providers.any((p) => p.providerId == EmailAuthProvider.PROVIDER_ID);
+  }
+
+  // Tự sửa họ tên và số điện thoại. Vai trò và trạng thái khóa do admin quản lý.
+  // _currentUser tự cập nhật theo hồ sơ đang được theo dõi ở _onAuthStateChanged.
+  Future<void> updateProfile({required String fullName, String? phone}) {
+    return _guard(() async {
+      final uid = _currentUser.value?.id;
+      if (uid == null) throw const AuthException('Bạn cần đăng nhập');
+      final trimmedPhone = phone?.trim();
+      await _userRepo.update(uid, {
+        'fullName': fullName.trim(),
+        'phone': (trimmedPhone == null || trimmedPhone.isEmpty) ? null : trimmedPhone,
+      });
+    });
+  }
+
   // ===== Dành cho admin. Firestore Rules cũng chặn nếu người gọi không phải admin. =====
 
   void _ensureAdmin() {

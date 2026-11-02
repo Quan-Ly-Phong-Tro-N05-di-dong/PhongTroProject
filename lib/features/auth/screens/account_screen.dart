@@ -10,6 +10,7 @@ import '../models/app_user.dart';
 import '../widgets/role_guard.dart';
 import '../widgets/user_avt.dart';
 import 'admin_users_screen.dart';
+import 'edit_profile_screen.dart';
 import 'login_screen.dart';
 import 'register_screen.dart';
 
@@ -171,6 +172,24 @@ class _ProfileView extends StatelessWidget {
                 title: const Text('Số điện thoại'),
                 subtitle: Text(user.phone ?? 'Chưa cập nhật'),
               ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.edit_outlined),
+                title: const Text('Sửa thông tin'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => EditProfileScreen(user: user)),
+                ),
+              ),
+              if (AuthService.instance.hasPassword) ...[
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.lock_reset),
+                  title: const Text('Đổi mật khẩu'),
+                  subtitle: const Text('Gửi link đặt lại mật khẩu qua email'),
+                  onTap: () => _changePassword(context),
+                ),
+              ],
             ],
           ),
         ),
@@ -209,6 +228,35 @@ class _ProfileView extends StatelessWidget {
         ),
       ],
     );
+  }
+
+  Future<void> _changePassword(BuildContext context) async {
+    // Lấy messenger trước khi chờ, tránh dùng context sau await
+    final messenger = ScaffoldMessenger.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Đổi mật khẩu?'),
+        content: Text('Link đặt lại mật khẩu sẽ được gửi tới ${user.email}.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Hủy'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Gửi'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await AuthService.instance.sendPasswordReset(email: user.email);
+      messenger.showSnackBar(SnackBar(content: Text('Đã gửi link tới ${user.email}')));
+    } on AuthException catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text(e.message)));
+    }
   }
 
   // Menu đổi ảnh đại diện
