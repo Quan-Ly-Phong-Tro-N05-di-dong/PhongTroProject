@@ -131,10 +131,12 @@ class AuthService {
     return user;
   }
 
-  // Chuyển mọi lỗi Firebase / Google thành AuthException để màn hình hiển thị
+  // Chuyển mọi lỗi thành AuthException để màn hình hiển thị
   Future<T> _guard<T>(Future<T> Function() action) async {
     try {
       return await action();
+    } on AuthException {
+      rethrow;
     } on GoogleSignInException catch (e) {
       if (e.code == GoogleSignInExceptionCode.canceled) {
         throw const AuthException('Đã hủy đăng nhập bằng Google');
@@ -145,6 +147,9 @@ class AuthService {
     } on FirebaseException catch (e) {
       // Lỗi Firestore, ví dụ permission-denied khi Rules chặn
       throw AuthException('Lỗi máy chủ (${e.code})');
+    } catch (e) {
+      debugPrint('Lỗi không xác định trong AuthService: $e');
+      throw const AuthException('Đã có lỗi xảy ra, vui lòng thử lại');
     }
   }
 
@@ -235,7 +240,6 @@ class AuthService {
       try {
         await firebaseUser.updateDisplayName(fullName.trim());
         final trimmedPhone = phone?.trim();
-        // throw FirebaseException(plugin: 'test', code: 'test'); // TEST 
         return await _saveProfile(AppUser(
           id: firebaseUser.uid,
           fullName: fullName.trim(),

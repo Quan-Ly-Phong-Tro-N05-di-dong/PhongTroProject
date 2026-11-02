@@ -29,6 +29,16 @@ class _UserAvatarState extends State<UserAvatar> {
     }
   }
 
+  // Ảnh rỗng hoặc hỏng thì trả về null để hiện chữ cái đầu
+  Uint8List? _decode(String? data) {
+    if (data == null || data.isEmpty) return null;
+    try {
+      return base64Decode(data);
+    } on FormatException {
+      return null;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<String?>(
@@ -37,13 +47,19 @@ class _UserAvatarState extends State<UserAvatar> {
         final base64 = snapshot.data;
         if (base64 != _lastBase64) {
           _lastBase64 = base64;
-          _bytes = base64 == null ? null : base64Decode(base64);
+          _bytes = _decode(base64);
         }
         final name = widget.user.fullName;
         return CircleAvatar(
           radius: widget.radius,
           backgroundColor: widget.user.disabled ? Colors.grey : Colors.blueAccent,
           backgroundImage: _bytes != null ? MemoryImage(_bytes!) : null,
+          // Dữ liệu đúng Base64 nhưng không phải ảnh
+          onBackgroundImageError: _bytes != null
+              ? (_, _) {
+                  if (mounted) setState(() => _bytes = null);
+                }
+              : null,
           child: _bytes != null
               ? null
               : Text(
