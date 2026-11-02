@@ -14,8 +14,8 @@ import '../../contact/services/interaction_service.dart';
 
 const String kPostImagePrefix = 'data:image/jpeg;base64,';
 
-/// Định dạng giá tiền VNĐ có dấu chấm ngăn cách hàng nghìn (VD: 3.500.000).
-/// Giữ nguyên chính xác giá trị VNĐ từ bài đăng (không tự đoán hay nhân 1.000.000).
+/// Định dạng giá tiền VNĐ có dấu chấm ngăn cách hàng nghìn.
+/// Giữ nguyên chính xác giá trị VNĐ từ bài đăng.
 String formatCurrencyVnd(num value) {
   final digits = value.round().toString();
   return digits.replaceAllMapped(
