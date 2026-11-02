@@ -31,8 +31,15 @@ class AccountScreen extends StatelessWidget {
       ),
       body: ValueListenableBuilder<AppUser?>(
         valueListenable: AuthService.instance.currentUser,
-        builder: (context, user, _) =>
-            user == null ? const _GuestView() : _ProfileView(user: user),
+        builder: (context, user, _) {
+          if (user != null) return _ProfileView(user: user);
+          return ValueListenableBuilder<bool>(
+            valueListenable: AuthService.instance.isAuthReady,
+            builder: (context, ready, _) => ready
+                ? const _GuestView()
+                : const Center(child: CircularProgressIndicator()),
+          );
+        },
       ),
     );
   }
