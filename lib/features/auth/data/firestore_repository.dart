@@ -6,11 +6,13 @@ class FirestoreRepository<T> {
   final T Function(String id, Map<String, dynamic> data) fromMap;
   final Map<String, dynamic> Function(T item) toMap;
 
+  // firestore chỉ truyền khi chạy test, mặc định dùng Firestore thật
   FirestoreRepository({
     required String collectionPath,
     required this.fromMap,
     required this.toMap,
-  }) : _collection = FirebaseFirestore.instance.collection(collectionPath);
+    FirebaseFirestore? firestore,
+  }) : _collection = (firestore ?? FirebaseFirestore.instance).collection(collectionPath);
 
   // Chuyển một document thành T, null nếu document không tồn tại
   T? _fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {

@@ -21,35 +21,59 @@ class AuthException implements Exception {
 
 // Xác thực bằng Firebase Authentication, thông tin và vai trò lưu ở Firestore: users/{uid}
 class AuthService {
-  static final AuthService instance = AuthService._();
+  static AuthService? _instance;
+  static AuthService get instance => _instance ??= AuthService._();
 
-  final FirebaseAuth _auth = FirebaseAuth.instance;
+  // Test thay bằng bản giả để các màn hình không cần kết nối Firebase
+  @visibleForTesting
+  static set instance(AuthService service) => _instance = service;
+
+  final FirebaseAuth _auth;
+  final Future<User> Function()? _googleSignInForTest;
 
   // Cùng một class generic FirestoreRepository<T>, dùng cho 2 loại đối tượng khác nhau
-  final _userRepo = FirestoreRepository<AppUser>(
-    collectionPath: 'users',
-    fromMap: AppUser.fromMap,
-    toMap: (user) => user.toMap(),
-  );
-  final _avatarRepo = FirestoreRepository<Avatar>(
-    collectionPath: 'avatars',
-    fromMap: Avatar.fromMap,
-    toMap: (avatar) => avatar.toMap(),
-  );
+  final FirestoreRepository<AppUser> _userRepo;
+  final FirestoreRepository<Avatar> _avatarRepo;
 
   final _currentUser = ValueNotifier<AppUser?>(null);
   final _authReady = ValueNotifier<bool>(false);
   final _authReadyCompleter = Completer<void>();
+  Timer? _authReadyTimer;
   StreamSubscription<AppUser?>? _profileSubscription;
   bool _googleInitialized = false;
 
-  AuthService._() {
+  AuthService._({
+    FirebaseAuth? auth,
+    FirebaseFirestore? firestore,
+    Future<User> Function()? googleSignIn,
+  })  : _auth = auth ?? FirebaseAuth.instance,
+        _googleSignInForTest = googleSignIn,
+        _userRepo = FirestoreRepository<AppUser>(
+          collectionPath: 'users',
+          fromMap: AppUser.fromMap,
+          toMap: (user) => user.toMap(),
+          firestore: firestore,
+        ),
+        _avatarRepo = FirestoreRepository<Avatar>(
+          collectionPath: 'avatars',
+          fromMap: Avatar.fromMap,
+          toMap: (avatar) => avatar.toMap(),
+          firestore: firestore,
+        ) {
     _auth.setLanguageCode('vi'); // Email đặt lại mật khẩu bằng tiếng Việt
+    // Mạng chậm cũng không để màn hình chờ mãi
+    _authReadyTimer = Timer(const Duration(seconds: 10), _markAuthReady);
     // Firebase tự nhớ phiên đăng nhập, mở lại app sẽ tự đăng nhập lại
     _auth.authStateChanges().listen(_onAuthStateChanged);
-    // Mạng chậm cũng không để màn hình chờ mãi
-    Timer(const Duration(seconds: 10), _markAuthReady);
   }
+
+  // googleSignIn thay cho bước đăng nhập qua SDK Google, không chạy được trong test
+  @visibleForTesting
+  AuthService.forTest({
+    required FirebaseAuth auth,
+    required FirebaseFirestore firestore,
+    Future<User> Function()? googleSignIn,
+  }) : this._(auth: auth, firestore: firestore, googleSignIn: googleSignIn);
 
   // Người dùng đang đăng nhập (null = chưa đăng nhập). Dùng ValueListenableBuilder để lắng nghe.
   ValueListenable<AppUser?> get currentUser => _currentUser;
@@ -62,6 +86,7 @@ class AuthService {
 
   void _markAuthReady() {
     if (_authReady.value) return;
+    _authReadyTimer?.cancel();
     _authReady.value = true;
     _authReadyCompleter.complete();
   }
@@ -170,26 +195,28 @@ class AuthService {
     });
   }
 
+  Future<User> _authenticateWithGoogle() async {
+    if (kIsWeb) {
+      // Trên web dùng popup của Firebase
+      final result = await _auth.signInWithPopup(GoogleAuthProvider());
+      return result.user!;
+    }
+    if (!_googleInitialized) {
+      await GoogleSignIn.instance.initialize();
+      _googleInitialized = true;
+    }
+    final account = await GoogleSignIn.instance.authenticate();
+    final credential = GoogleAuthProvider.credential(
+      idToken: account.authentication.idToken,
+    );
+    return (await _auth.signInWithCredential(credential)).user!;
+  }
+
   // chooseRole chỉ được gọi khi tài khoản Google đăng nhập lần đầu,
   // trả về null nghĩa là người dùng hủy.
   Future<AppUser> signInWithGoogle({required Future<UserRole?> Function() chooseRole}) {
     return _guard(() async {
-      final User firebaseUser;
-      if (kIsWeb) {
-        // Trên web dùng popup của Firebase
-        final result = await _auth.signInWithPopup(GoogleAuthProvider());
-        firebaseUser = result.user!;
-      } else {
-        if (!_googleInitialized) {
-          await GoogleSignIn.instance.initialize();
-          _googleInitialized = true;
-        }
-        final account = await GoogleSignIn.instance.authenticate();
-        final credential = GoogleAuthProvider.credential(
-          idToken: account.authentication.idToken,
-        );
-        firebaseUser = (await _auth.signInWithCredential(credential)).user!;
-      }
+      final firebaseUser = await (_googleSignInForTest ?? _authenticateWithGoogle)();
 
       final existing = await _loadProfile(firebaseUser.uid);
       if (existing != null) {
